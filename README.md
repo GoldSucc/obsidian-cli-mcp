@@ -30,7 +30,7 @@ which obsidian          # /Applications/Obsidian.app/Contents/MacOS/obsidian on 
 obsidian version
 ```
 
-If `obsidian` isn't on PATH, install the latest Obsidian and re-launch your shell.
+If `obsidian` isn't on PATH, install the latest Obsidian, enable command line tools in general settings and re-launch your shell.
 
 ### 2. Add the marketplace + install the plugin (recommended)
 
