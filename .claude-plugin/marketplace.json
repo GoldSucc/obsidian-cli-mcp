@@ -1,0 +1,14 @@
+{
+  "name": "obsidian-cli-mcp",
+  "description": "Obsidian CLI MCP server + project semantic indexing",
+  "owner": {
+    "name": "GoldSucc"
+  },
+  "plugins": [
+    {
+      "name": "obsidian-cli-mcp",
+      "description": "MCP wrapping the Obsidian CLI. Includes the index-project skill and SessionStart hook to auto-load project context from the vault.",
+      "source": "./plugin"
+    }
+  ]
+}

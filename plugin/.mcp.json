@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "obsidian-cli": {
+      "command": "obsidian-cli-mcp"
+    }
+  }
+}
