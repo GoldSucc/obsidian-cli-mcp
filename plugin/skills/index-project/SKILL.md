@@ -88,10 +88,20 @@ tags: [project/<project>, topic/<topic>]
 - group related points
 - prefer tables for structured data
 
-## Files involved
+## References
 
-- `path/to/file.ext:42` — what this part does
-- `internal/foo/bar.go` — symbol-level pointers welcome
+A future LLM reading this page must be able to **fetch the referenced thing without searching**. Every behavioral claim above gets at least one entry here. Format depends on what's referenced:
+
+- `internal/auth/middleware.go:42-58` — Validates JWT tokens; rejects expired
+- `cmd/server/main.go:120` — Wires the auth middleware
+- `class:ZCL_AUTH_HANDLER` (S/4HANA, package `ZAUTH`) — Handles SAML SSO login
+- `cds:Z_USER_VIEW` (CDS view, ABAP) — Surfaces user attrs to UI
+- `function:Z_USER_FETCH` (FuGr `ZUSR`) — Reads user master data
+- `config:auth.jwt.secret` in `.env` — Token signing key
+- `config:server.port` in `config/default.yaml`
+- `env:DATABASE_URL` defined in `docker-compose.yml`
+- `table:ZAUTH_LOG` (custom DB table) — Append-only audit log
+- `endpoint:POST /api/auth/login` (handled in `internal/auth/handler.go:18`)
 
 ## Gotchas
 
@@ -102,11 +112,41 @@ tags: [project/<project>, topic/<topic>]
 [[index]] · [[architecture]] · [[conventions]] · [[<other-topic>]]
 ```
 
+## Reference taxonomy
+
+A "reference" is anything an LLM can later fetch and inspect. Pick the prefix that matches the kind:
+
+| Prefix | Pattern | Fetch with |
+|---|---|---|
+| (no prefix, file path) | `path/to/file.ext:42` or `path/to/file.ext:42-58` or `path/to/file.ext` | `Read` (with line range when applicable) |
+| `class:` | `class:ZCL_FOO` | `mcp__plugin_vsp_sap-adt__GetSource` (ABAP) / `Read` for non-ABAP |
+| `interface:` | `interface:ZIF_BAR` | language-appropriate symbol fetch |
+| `function:` | `function:Z_FOO` (FuGr `ZBAR`) | `mcp__plugin_vsp_sap-adt__GetSource` |
+| `cds:` | `cds:Z_VIEW` | `mcp__plugin_vsp_sap-adt__GetSource` |
+| `bdef:` | `bdef:Z_BO_DEF` | `mcp__plugin_vsp_sap-adt__GetSource` |
+| `srvd:` / `srvb:` | `srvd:Z_SERVICE_DEF` | `mcp__plugin_vsp_sap-adt__GetServiceMetadata` |
+| `dtel:` / `doma:` / `tabl:` / `strucutre:` | `tabl:ZAUTH_LOG` | `mcp__plugin_vsp_sap-adt__GetTable` / `GetSource` |
+| `config:` | `config:section.key` in `<file>` | `Read` the config file, locate key |
+| `env:` | `env:VAR_NAME` defined in `<file>` | `Read` the file (compose, .env, dockerfile) |
+| `endpoint:` | `endpoint:METHOD /path` (handled in `<file>:<line>`) | `Read` the handler file |
+| `table:` | `table:NAME` (in DB X) | DB introspection; for ABAP `GetTable` |
+| `package:` | `package:ZFOO` | `mcp__plugin_vsp_sap-adt__GetPackage` |
+| `transport:` | `transport:DEVK900123` | `mcp__plugin_vsp_sap-adt__GetTransport` |
+| `command:` | `command:make build` | `Bash` |
+| `url:` | `url:https://...` | `WebFetch` / `obsidian:defuddle` |
+
+Always include the **smallest fetchable unit**:
+- File + line range > file alone > directory.
+- ABAP object name > package alone.
+- Specific config key > "see config file".
+
+If a reference doesn't fit a prefix, write `<your-prefix>:<id>` and add a parenthetical hint of how to fetch it. The LLM will figure it out.
+
 ## Page rules
 
 - **Append over rewrite.** Knowledge accumulates. Don't lose history. Use `obsidian_append`, not `obsidian_create overwrite=true`.
 - **Wikilinks resolve by filename** — keep names unique within `semantic-index/<project>/`.
-- **Ground every claim in code.** Every assertion needs a `path:line` reference, otherwise it'll rot.
+- **Ground every claim in a reference.** Every assertion has at least one entry under `## References` or it doesn't go in the page. References must be fetchable (line range, object name, config key, env var, endpoint) — not vague pointers like "in the auth module".
 - **Caveman style**: short fragments, headings, tags, embeds. Match the user's vault style.
 - **Frontmatter fields** are typed via `obsidian_property_set`. `last-updated` is a `date`. `tags` is a `list`.
 - **Tag everything `#project/<name>`** — makes the project's index queryable from a Bases view across the vault.

@@ -54,7 +54,20 @@ func Run(ctx context.Context, a Args) (string, error) {
 		}
 		return "", fmt.Errorf("obsidian %s: %s", a.Command, msg)
 	}
-	return stdout.String(), nil
+	out := stdout.String()
+	// CLI reports many failures via stdout with exit code 0, prefixed `Error:`.
+	if trimmed := strings.TrimSpace(out); strings.HasPrefix(trimmed, "Error:") {
+		return "", fmt.Errorf("obsidian %s: %s", a.Command, trimmed)
+	}
+	return out, nil
+}
+
+func VaultPath(ctx context.Context, vault string) (string, error) {
+	out, err := Run(ctx, Args{Command: "vault", Vault: vault, Params: map[string]string{"info": "path"}})
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
 }
 
 var preamblePatterns = []string{

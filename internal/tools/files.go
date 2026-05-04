@@ -2,6 +2,9 @@ package tools
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/GoldSucc/obsidian-cli-mcp/internal/exec"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -130,7 +133,16 @@ type MoveInput struct {
 func moveHandler(ctx context.Context, _ *mcp.CallToolRequest, in MoveInput) (*mcp.CallToolResult, TextOutput, error) {
 	params := in.params()
 	params["to"] = in.To
-	out, err := exec.Run(ctx, exec.Args{Command: "move", Vault: in.Vault, Params: params})
+	args := exec.Args{Command: "move", Vault: in.Vault, Params: params}
+	out, err := exec.Run(ctx, args)
+	if err != nil && strings.Contains(err.Error(), "ENOENT") && strings.Contains(err.Error(), in.To) {
+		// CLI's move uses raw rename(2) — no auto-mkdir. Create destination dir, retry.
+		if root, vErr := exec.VaultPath(ctx, in.Vault); vErr == nil && root != "" {
+			if mkErr := os.MkdirAll(filepath.Join(root, filepath.Dir(in.To)), 0o755); mkErr == nil {
+				out, err = exec.Run(ctx, args)
+			}
+		}
+	}
 	if err != nil {
 		return nil, TextOutput{}, err
 	}
