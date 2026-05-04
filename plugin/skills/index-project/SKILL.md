@@ -41,7 +41,16 @@ Project name = `basename($PWD)`. Stable across sessions.
 | User says "remember X" / "important: X" | Append to `gotchas.md` or `decisions.md`. |
 | Architectural change | Update `architecture.md` and any affected feature pages. |
 
-## Bootstrap workflow (no index exists)
+## Bootstrap is two steps
+
+| Step | Output | Who runs it | Audience |
+|---|---|---|---|
+| **1. Topic indexing** (this skill) | `semantic-index/<project>/{index.md, _index.base, <topic>.md, ...}` — prose pages explaining the project's domains | Parent (Opus) inline OR `documenter` agent (Sonnet) for heavy bootstrap | Reading: humans + Claude reasoning about the project |
+| **2. Microindexing** | `semantic-index/<project>/index/<kind>/<name>.md` — one tiny note per **indexable unit** (source file, ABAP class/CDS/BDef via MCP, config key, env var, HTTP endpoint, DB table, IaC module — anything fetchable) with `#topic/*` tags + anchors | `microindexer` agent (Haiku) | Searching: tag/property queries, "semantic LSP" |
+
+Step 2 depends on step 1 — the microindex reuses the topic taxonomy step 1 establishes.
+
+## Step 1 — Topic indexing workflow (no index exists)
 
 1. **Detect project name** — `basename($PWD)`.
 2. **Scan top-level**: `README.md`, `CLAUDE.md`, `docs/`, `package.json` / `go.mod` / `Cargo.toml` / `pyproject.toml`, `Dockerfile`, CI configs.
@@ -51,6 +60,36 @@ Project name = `basename($PWD)`. Stable across sessions.
 6. **Write `_index.base`** — drop the project base file (template below). Auto-scopes to the project folder via `this.file.folder`. Gives the user a dashboard view of every topic page with last-updated, staleness, group-by-topic.
 7. **Cross-link generously** — every wikilink in a page should resolve.
 8. **Confirm with user** — show the index map before declaring done.
+
+## Step 2 — Microindexing (delegate to `microindexer`)
+
+Once topic pages exist (step 1 done), dispatch the `microindexer` agent to walk every **indexable unit** of the project — not just source files. Units include: source files (any language), ABAP repository objects (classes, CDS views, BDefs, function modules, tables, packages — fetched via the SAP ADT MCP), config keys (YAML/TOML/JSON/env), HTTP/RPC endpoints, DB schema objects, IaC modules (Terraform, K8s, Helm), feature flags, env vars. The agent picks the right source per unit (filesystem, MCP, DB introspection, etc.) and writes one tiny note per unit under `semantic-index/<project>/index/<kind>/<name>.md`. Each note is frontmatter + 1-line summary + anchors with inline `#topic/*` tags — designed for retrieval, not reading.
+
+Example queries the microindex enables:
+
+- `obsidian_tag name=topic/login verbose path=semantic-index/<project>` → every code object related to login
+- `obsidian_search query="topic/jwt" path=semantic-index/<project>/index` → files with JWT-tagged anchors
+- Bases dashboard at `semantic-index/<project>/index/_index.base` → pivot by `kind`, by `themes`, by recency
+
+How to dispatch:
+
+```
+Agent({
+  description: "Microindex <project> code objects",
+  subagent_type: "microindexer",
+  prompt: "Build microindex for project <project> at <abs path>. Scope: <dirs>. Modules: <list-or-flat>. Reuse the #topic/* and #theme/* tags from the existing semantic-index/<project>/ topic pages. Cross-link to topic pages and docs/<theme>/ where applicable."
+})
+```
+
+`microindexer` runs on **Haiku** — cheap mass scanning, no deep reasoning needed. Don't pass `model: opus` or `model: sonnet`. The agent invokes itself against the microindex spec and returns a report with counts per `kind`, new tags introduced, and cross-references made.
+
+The microindex layout, note template, anchor format, granularity rules, and base file template all live inside the `microindexer` agent file — not duplicated here.
+
+## Re-microindexing (incremental)
+
+Re-run `microindexer` after major refactors to refresh anchors and tags. The agent appends/updates rather than rewrites — `last-indexed` timestamps surface stale notes via the base's "Stale (>30d)" view.
+
+For small changes (one new file, one renamed class) the parent does the microindex update inline — no need to dispatch the agent for ≤5 notes.
 
 ```
 mcp__obsidian-cli__obsidian_create  path="semantic-index/<project>/index.md"  content="..."

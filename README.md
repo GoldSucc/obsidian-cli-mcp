@@ -9,6 +9,7 @@ MCP server + Claude Code plugin that wraps the official `obsidian` CLI and turns
 - **`index-project` skill** — Claude-maintained semantic index of code projects under `semantic-index/<project>/` in your vault. Linked notes, frontmatter, wikilinks. Survives sessions, compounds over time.
 - **`document-theme` skill** — general topic knowledge base under `docs/<theme>/` with `_index.base` dashboards. Subject-noun themes, source-cited (Context7, defuddle, web), reusable across projects.
 - **`documenter` subagent** (Sonnet) — specialized for mass-indexing and theme documentation. Parent Opus delegates focused doc tasks; documenter executes against the skills.
+- **`microindexer` subagent** (Haiku) — second-step indexer that walks every **indexable unit** in a project — source files, ABAP repository objects (via SAP ADT MCP), config keys, env vars, HTTP endpoints, DB tables, IaC modules — and creates one tiny semantic-only note per unit under `semantic-index/<project>/index/<kind>/<name>.md`. Each note is frontmatter + 1-line summary + anchors with inline `#topic/*` tags. Designed for retrieval, not reading — a queryable "semantic LSP" so Claude can ask "what implements login?" via `obsidian_tag` and get the full list of relevant units regardless of where they live.
 - **SessionStart hook** — auto-injects the project's `index.md` at session start so Claude opens with full context.
 
 See [`docs/index.md`](docs/index.md) for architecture, full tool reference, and dev notes.
@@ -96,14 +97,15 @@ If the project doesn't have a semantic index yet, ask Claude to invoke the `inde
 
 The plugin turns your Obsidian vault into Claude's persistent memory. Two stores, two skills, one specialized subagent.
 
-### Two stores in your vault
+### Three stores in your vault
 
 | Path | Store | Audience |
 |---|---|---|
-| `semantic-index/<project>/` | Per-code-project memory. Terse, auto-evolving fragments tied to `basename($PWD)`. | Claude, primarily |
-| `docs/<theme>/` | Per-topic knowledge base. Curated, source-cited deep dives on subjects (OAuth, Kubernetes, regex, …). | Humans + Claude |
+| `semantic-index/<project>/<topic>.md` | Per-code-project topic pages. Prose explaining the project's domains. | Claude reasoning + humans |
+| `semantic-index/<project>/index/<kind>/<name>.md` | Per-code-object microindex. Frontmatter + line-range anchors + `#topic/*` tags. Semantic LSP. | Tag/property queries — "what implements X?" |
+| `docs/<theme>/` | Per-topic general knowledge. Curated, source-cited deep dives (OAuth, Kubernetes, regex, …). | Humans + Claude |
 
-A top-level `docs/_index.base` dashboard catalogues every theme so you can see at a glance what's documented and what's missing.
+A top-level `docs/_index.base` dashboard catalogues every theme. A per-project `semantic-index/<project>/_index.base` dashboards the topic pages. A per-project `semantic-index/<project>/index/_index.base` pivots the microindex by `kind`, `module`, or `theme`.
 
 ### Two skills, both auto-loaded
 
@@ -151,8 +153,42 @@ Agent({
 
 The agent invokes the relevant skill itself, executes against templates, returns a ≤30-line structured report listing paths created, sources used, gaps left for follow-up.
 
-> [!info] Don't override the model
-> The agent is sonnet by design. Don't pass `model: opus` when invoking — that defeats the cost split.
+### `microindexer` — Haiku subagent for the semantic LSP layer
+
+After topic pages exist, dispatch `microindexer` to walk every code object and produce one tiny note per object under `semantic-index/<project>/index/<kind>/<name>.md`. Each note has:
+
+- Frontmatter: `kind`, `name`, `ref`, `path`, `tags`, `themes`, `last-indexed`
+- 1-line semantic summary
+- **Anchors** — bullet per searchable region with `path:line-range` + `#topic/*` tags + optional `[[topic-page]]` wikilinks
+
+Example anchors inside `semantic-index/techstep/index/file/auth.md`:
+
+```
+- `Login` — `internal/auth/auth.go:23-55` — login impl, password check, JWT issue #topic/auth #topic/login #topic/jwt [[../../authentication]]
+- `validateCredentials` — `internal/auth/auth.go:60-78` — bcrypt compare #topic/auth #topic/password
+- `IssueJWT` — `internal/auth/auth.go:80-100` — sign claims with HS256 #topic/jwt #topic/tokens [[../../authentication]]
+```
+
+This makes the microindex queryable Obsidian-natively:
+
+- `obsidian_tag name=topic/login verbose path=semantic-index/<project>` → every code object related to login
+- `obsidian_search query="topic/jwt" path=semantic-index/<project>/index` → files with JWT-tagged anchors
+- Bases dashboard at `semantic-index/<project>/index/_index.base` → pivot by `kind`, by `module`, by `theme`, by recency
+
+**How to dispatch:**
+
+```
+Agent({
+  description: "Microindex techstep code objects",
+  subagent_type: "microindexer",
+  prompt: "Build microindex for project techstep at <abs path>. Scope: src/ + abap/. Modules: web (TypeScript), abap (S/4HANA). Reuse existing #topic/* and #theme/* tags from semantic-index/techstep/. Cross-link to topic pages and docs/sap-abap/, docs/cap/."
+})
+```
+
+The agent runs on Haiku (cheap mass scanning), produces hundreds of small notes, returns a count-by-kind report.
+
+> [!info] Don't override agent models
+> Both agents pin a model in their definition: `documenter` is Sonnet, `microindexer` is Haiku. Don't pass `model: opus` when invoking — that defeats the cost split. Pass only `subagent_type` and `prompt`.
 
 ### Triggering paths summary
 

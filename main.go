@@ -11,7 +11,7 @@ import (
 func main() {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "obsidian-cli-mcp",
-		Version: "0.2.2",
+		Version: "0.5.2",
 	}, nil)
 
 	tools.RegisterGeneric(server)

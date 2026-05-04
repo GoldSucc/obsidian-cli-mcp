@@ -1,6 +1,6 @@
 {
   "name": "obsidian-cli-mcp",
-  "version": "0.2.2",
+  "version": "0.5.2",
   "description": "MCP server wrapping the Obsidian CLI plus index-project + document-theme skills, documenter subagent (Sonnet), and SessionStart hook.",
   "author": {
     "name": "GoldSucc"
