@@ -1,6 +1,6 @@
 ---
 name: microindexer
-description: Walk every indexable unit of a project — source files OR ABAP repository objects (classes, CDS views, BDefs, function modules, tables, packages) accessed via the SAP ADT MCP, OR config keys, env vars, HTTP endpoints, DB tables, infrastructure resources, IaC modules, etc. — and create one tiny semantic-only note per unit under `semantic-index/<project>/index/<kind>/<name>.md` (or `semantic-index/<project>/<module>/index/<kind>/<name>.md` for modular projects). Each note is mostly frontmatter — `kind`, `name`, `ref`, `tags`, `themes`, 1-line summary. Designed for tag/property queries — a "semantic LSP" — so Claude can ask "what implements auth?" and get back the full list of relevant objects regardless of where they live. Runs on Haiku for cost-efficient mass scanning. Use as the SECOND step of project indexing, after `index-project` has bootstrapped topic pages. TRIGGER on: "build microindex for <project>", "create semantic LSP", "index every object", second step of `index-project` bootstrap, after a major refactor when references drift.
+description: Walk every indexable unit of a project — source files OR ABAP repository objects (classes, CDS views, BDefs, function modules, tables, packages) accessed via the SAP ADT MCP, OR config keys, env vars, HTTP endpoints, DB tables, infrastructure resources, IaC modules, etc. — and create one tiny semantic-only note per unit under `semantic-index/<project>/index/<kind>/<name>.md` (or `semantic-index/<project>/<module>/index/<kind>/<name>.md` for modular projects). Each note is mostly frontmatter — `kind`, `name`, `ref`, `tags`, `themes`, 1-line summary. Designed for tag/property queries — a "semantic LSP" — so Claude can ask "what implements auth?" and get back the full list of relevant objects regardless of where they live. Runs on Haiku for cost-efficient mass scanning. Use as the FIRST step of project indexing — topic pages get written afterwards using the microindex as input. Topic backlinks appear automatically via Obsidian's link graph once topic pages reference microindex notes. TRIGGER on: "build microindex for <project>", "create semantic LSP", "index every object", first step of `index-project` bootstrap, after a major refactor when references drift.
 model: haiku
 color: green
 ---
@@ -91,30 +91,51 @@ Format:
 - `<symbol>` — `<path>:<lines>` — <terse phrase> <#topic/x> <#topic/y> [[<topic-or-theme>]]
 ```
 
-Examples:
+Examples (assuming topic pages don't exist yet — link only to themes):
 
 ```
-- `Login` — `internal/auth/auth.go:23-55` — login impl, password check, JWT issue #topic/auth #topic/login #topic/jwt [[../../authentication]]
+- `Login` — `internal/auth/auth.go:23-55` — login impl, password check, JWT issue #topic/auth #topic/login #topic/jwt
 - `validateCredentials` — `internal/auth/auth.go:60-78` — bcrypt compare #topic/auth #topic/password
-- `IssueJWT` — `internal/auth/auth.go:80-100` — sign claims with HS256 #topic/jwt #topic/tokens [[../../authentication]]
+- `IssueJWT` — `internal/auth/auth.go:80-100` — sign claims with HS256 #topic/jwt #topic/tokens
 - `Logout` — `internal/auth/auth.go:120-130` — token revocation #topic/auth #topic/logout
 ```
 
-For non-code objects (configs, env vars, tables) anchors usually aren't applicable — the frontmatter `ref` is the whole reference.
+When topic pages already exist (incremental re-run), append wikilinks at the end of the line:
+
+```
+- `Login` — `internal/auth/auth.go:23-55` — login impl, password check, JWT issue #topic/auth #topic/login #topic/jwt [[../../authentication]]
+```
+
+For non-code units (configs, env vars, tables) anchors usually aren't applicable — the frontmatter `ref` is the whole reference.
 
 For ABAP objects: anchors point at method/event names with a brief phrase + tags. `path:lines` becomes `class:ZCL_FOO->METHOD_NAME` or similar from the reference taxonomy.
 
-## Implements topics
+## Themes (forward link, frontmatter)
 
-- [[../../<topic>]]                          ← link to project topic page
-- [[../../../docs/<theme>/README]]           ← link to general theme
+`themes:` frontmatter list points at general topic deep-dives in the vault that this unit is an instance of. These pages already exist (they live under `docs/<theme>/`). Examples:
 
-## Related objects
-
-- [[../<kind>/<other-name>]]
+```yaml
+themes: [authentication, jwt-tokens]   # → links to docs/authentication/, docs/jwt-tokens/
 ```
 
-The body stays tiny: a 1-line summary, the anchors list, topic/theme links, related-objects links. Implementation details and how-it-works belong in `<topic>.md` topic pages — the microindex only points at them.
+Body wikilinks to themes are optional — frontmatter is enough for queries.
+
+## Topic backlinks (automatic, via Obsidian)
+
+Don't manually add `[[../../<topic>]]` links to microindex notes during the first-pass build. Topic pages don't exist yet (microindex is step 1). When step 2 (topic indexing via the `index-project` skill or `documenter` agent) writes topic pages, those topic pages will include `## Implements` sections with wikilinks INTO microindex notes. Obsidian's auto-backlink graph then surfaces the reverse — `obsidian_backlinks file=<microindex-note>` returns every topic page that mentions it. No double-write.
+
+## Related objects (optional)
+
+When two microindex notes are tightly coupled (e.g. a class implements an interface; a config key is consumed by a specific function), include a `## Related objects` section with wikilinks to those siblings. Use sparingly — most relations are visible through tag overlap.
+
+```
+## Related objects
+
+- [[../interface/AuthHandlerIface]]
+- [[../config/jwt-secret]]
+```
+
+The body stays tiny: 1-line summary, anchors list, optional related-objects. Implementation details belong in `<topic>.md` topic pages — the microindex only points at them.
 
 ## Anchoring rules
 
@@ -176,8 +197,8 @@ Heuristic: would the parent ever ask "what implements X" or "where is Y configur
 
 ## Workflow
 
-1. **Read existing topic pages** at `semantic-index/<project>/<topic>.md` (use `obsidian_files_list` then `obsidian_read`) to learn the project's vocabulary, tags, themes, and which subsystems exist.
-2. **Read existing tags** via `obsidian_tags counts format=tsv` to harvest the `#theme/*` and `#topic/*` namespaces — reuse them.
+1. **Read existing tags** via `obsidian_tags counts format=tsv` to harvest the `#theme/*` and `#topic/*` namespaces — reuse them. The vault may have a long-running tag taxonomy from prior projects; use it.
+2. **Read existing topic pages IF ANY** at `semantic-index/<project>/<topic>.md` (use `obsidian_files_list` then `obsidian_read`). Most of the time topic pages won't exist yet — microindex is FIRST step. When they do exist (incremental run after a refactor), use them to learn the project's vocabulary and confirm tag choices.
 3. **Identify the unit sources** in scope. The parent's prompt should hint, but you decide:
    - **Filesystem**: `Glob` for source files (respect `.gitignore`, skip vendored deps + build outputs). `Read` source content.
    - **SAP / ABAP**: `mcp__plugin_vsp_sap-adt__GetPackage` for package contents, then `GetSource` per object. Use this when the project is an ABAP repo or has an ABAP module.

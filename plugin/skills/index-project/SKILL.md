@@ -41,55 +41,60 @@ Project name = `basename($PWD)`. Stable across sessions.
 | User says "remember X" / "important: X" | Append to `gotchas.md` or `decisions.md`. |
 | Architectural change | Update `architecture.md` and any affected feature pages. |
 
-## Bootstrap is two steps
+## Bootstrap is two steps — micro first, topics second
 
 | Step | Output | Who runs it | Audience |
 |---|---|---|---|
-| **1. Topic indexing** (this skill) | `semantic-index/<project>/{index.md, _index.base, <topic>.md, ...}` — prose pages explaining the project's domains | Parent (Opus) inline OR `documenter` agent (Sonnet) for heavy bootstrap | Reading: humans + Claude reasoning about the project |
-| **2. Microindexing** | `semantic-index/<project>/index/<kind>/<name>.md` — one tiny note per **indexable unit** (source file, ABAP class/CDS/BDef via MCP, config key, env var, HTTP endpoint, DB table, IaC module — anything fetchable) with `#topic/*` tags + anchors | `microindexer` agent (Haiku) | Searching: tag/property queries, "semantic LSP" |
+| **1. Microindexing** | `semantic-index/<project>/index/<kind>/<name>.md` — one tiny note per **indexable unit** (source file, ABAP class/CDS/BDef via MCP, config key, env var, HTTP endpoint, DB table, IaC module — anything fetchable) with `#topic/*` tags + anchors | `microindexer` agent (Haiku) | Searching: tag/property queries, "semantic LSP" |
+| **2. Topic indexing** (this skill) | `semantic-index/<project>/{index.md, _index.base, <topic>.md, ...}` — prose pages explaining the project's domains, **with explicit wikilinks to the microindex notes that implement each topic** | Parent (Opus) inline OR `documenter` agent (Sonnet) for heavy bootstrap | Reading: humans + Claude reasoning about the project |
 
-Step 2 depends on step 1 — the microindex reuses the topic taxonomy step 1 establishes.
+Why this order: the microindex is the ground truth — every fetchable unit with its tags. Topic pages synthesize across units. Easier to write the high-level synthesis when the low-level inventory already exists.
 
-## Step 1 — Topic indexing workflow (no index exists)
+**Bidirectional linking**:
+- Topic pages contain wikilinks to specific microindex notes (`[[index/<kind>/<name>]]`) under "Implements".
+- Microindex notes do NOT manually link back — Obsidian's auto-backlink graph handles the reverse direction. Use `obsidian_backlinks` from a microindex note to find all topic pages that reference it.
 
-1. **Detect project name** — `basename($PWD)`.
-2. **Scan top-level**: `README.md`, `CLAUDE.md`, `docs/`, `package.json` / `go.mod` / `Cargo.toml` / `pyproject.toml`, `Dockerfile`, CI configs.
-3. **Map domains** — open `src/`, `internal/`, `lib/`, `tests/`. Identify subsystems by directory naming + import patterns.
-4. **Write `index.md`** first — short overview, link table to all topic pages, last-updated date, project tags.
-5. **Write topic pages** — one per identified domain. Use the page template below.
-6. **Write `_index.base`** — drop the project base file (template below). Auto-scopes to the project folder via `this.file.folder`. Gives the user a dashboard view of every topic page with last-updated, staleness, group-by-topic.
-7. **Cross-link generously** — every wikilink in a page should resolve.
-8. **Confirm with user** — show the index map before declaring done.
+## Step 1 — Microindexing (delegate to `microindexer`)
 
-## Step 2 — Microindexing (delegate to `microindexer`)
+Dispatch the `microindexer` agent first, before writing any topic pages. The agent walks every indexable unit and writes one tiny note per unit under `semantic-index/<project>/index/<kind>/<name>.md`. Each note is frontmatter + 1-line summary + anchors with inline `#topic/*` tags.
 
-Once topic pages exist (step 1 done), dispatch the `microindexer` agent to walk every **indexable unit** of the project — not just source files. Units include: source files (any language), ABAP repository objects (classes, CDS views, BDefs, function modules, tables, packages — fetched via the SAP ADT MCP), config keys (YAML/TOML/JSON/env), HTTP/RPC endpoints, DB schema objects, IaC modules (Terraform, K8s, Helm), feature flags, env vars. The agent picks the right source per unit (filesystem, MCP, DB introspection, etc.) and writes one tiny note per unit under `semantic-index/<project>/index/<kind>/<name>.md`. Each note is frontmatter + 1-line summary + anchors with inline `#topic/*` tags — designed for retrieval, not reading.
-
-Example queries the microindex enables:
-
-- `obsidian_tag name=topic/login verbose path=semantic-index/<project>` → every code object related to login
-- `obsidian_search query="topic/jwt" path=semantic-index/<project>/index` → files with JWT-tagged anchors
-- Bases dashboard at `semantic-index/<project>/index/_index.base` → pivot by `kind`, by `themes`, by recency
+Units include: source files (any language), ABAP repository objects (via the SAP ADT MCP), config keys (YAML/TOML/JSON/env), HTTP/RPC endpoints, DB schema objects, IaC modules (Terraform, K8s, Helm), feature flags, env vars. The agent picks the right source per unit (filesystem, MCP, DB introspection, …).
 
 How to dispatch:
 
 ```
 Agent({
-  description: "Microindex <project> code objects",
+  description: "Microindex <project>",
   subagent_type: "microindexer",
-  prompt: "Build microindex for project <project> at <abs path>. Scope: <dirs>. Modules: <list-or-flat>. Reuse the #topic/* and #theme/* tags from the existing semantic-index/<project>/ topic pages. Cross-link to topic pages and docs/<theme>/ where applicable."
+  prompt: "Build microindex for project <project> at <abs path>. Sources: <filesystem dirs and/or ABAP packages and/or config files and/or DB schemas — whatever applies>. Modules: <list-or-flat>. Reuse #topic/* tags from the vault-wide taxonomy. Themes available: <list of docs/<theme>/ to link to>. (Topic pages don't exist yet — link `themes:` to docs/<theme>/, leave topic backlinks for step 2 to add forward.)"
 })
 ```
 
-`microindexer` runs on **Haiku** — cheap mass scanning, no deep reasoning needed. Don't pass `model: opus` or `model: sonnet`. The agent invokes itself against the microindex spec and returns a report with counts per `kind`, new tags introduced, and cross-references made.
+`microindexer` runs on **Haiku** — cheap mass scanning. Don't pass `model: opus` or `model: sonnet`.
 
-The microindex layout, note template, anchor format, granularity rules, and base file template all live inside the `microindexer` agent file — not duplicated here.
+The microindex layout, note template, anchor format, granularity rules, and base file template all live inside the `microindexer` agent file.
 
-## Re-microindexing (incremental)
+## Step 2 — Topic indexing workflow (using the microindex as input)
 
-Re-run `microindexer` after major refactors to refresh anchors and tags. The agent appends/updates rather than rewrites — `last-indexed` timestamps surface stale notes via the base's "Stale (>30d)" view.
+1. **Detect project name** — `basename($PWD)`.
+2. **Read the microindex first** — `obsidian_files_list folder=semantic-index/<project>/index` and sample notes to learn what units exist, by `kind`. The microindex is your map of the project; topics synthesize across it.
+3. **Scan top-level for context**: `README.md`, `CLAUDE.md`, `docs/`, `package.json` / `go.mod` / `Cargo.toml` / `pyproject.toml`, `Dockerfile`, CI configs.
+4. **Identify topics from the microindex**: cluster microindex notes by tags and themes. Each cluster ≈ one topic page (`authentication`, `data-model`, `deployment`, …).
+5. **Write `index.md`** — short overview, link table to all topic pages, last-updated date, project tags.
+6. **Write topic pages** — one per identified domain. **Each topic page MUST include an `## Implements` section with wikilinks to the relevant microindex notes** (`[[index/<kind>/<name>]]`). Use the page template below.
+7. **Write `_index.base`** — drop the project base file (template below). Auto-scopes via `this.file.folder`.
+8. **Cross-link generously** — every wikilink in a page should resolve. Topic pages link to microindex notes via wikilinks; microindex backlinks appear automatically in Obsidian.
+9. **Confirm with user** — show the index map before declaring done.
 
-For small changes (one new file, one renamed class) the parent does the microindex update inline — no need to dispatch the agent for ≤5 notes.
+When the topic-page work is heavy (≥5 pages, lots of microindex notes to digest), delegate to the `documenter` agent. The agent's prompt should include: "First, read existing microindex at `semantic-index/<project>/index/`. Cluster microindex notes by tag/theme to identify topics. Each topic page must reference the microindex notes that implement it via wikilinks under `## Implements`."
+
+## Re-running
+
+- **After major refactor**: re-run `microindexer` to refresh anchors and tags. Existing notes get `last-indexed` bumped; new units get new notes; deleted units leave stale notes (surface via the base's "Stale (>30d)" view).
+- **After a new feature lands**: parent inline can add a microindex note for the new unit AND extend the relevant topic page with a wikilink to it. Don't redispatch `microindexer` for one or two units.
+- **After major topic restructuring**: dispatch `documenter` to rewrite affected topic pages, re-reading the microindex.
+
+For small changes (one new unit, one renamed class) the parent does the update inline — no need to dispatch agents for ≤5 writes.
 
 ```
 mcp__obsidian-cli__obsidian_create  path="semantic-index/<project>/index.md"  content="..."
@@ -127,20 +132,30 @@ tags: [project/<project>, topic/<topic>]
 - group related points
 - prefer tables for structured data
 
+## Implements
+
+The microindex notes (in `index/<kind>/`) that implement this topic. Forward links here; Obsidian shows the reverse via auto-backlinks.
+
+- [[index/file/auth-middleware-go]] — JWT middleware
+- [[index/class/ZCL_AUTH_HANDLER]] — SAML SSO handler
+- [[index/cds/Z_USER_VIEW]] — User attribute exposure
+- [[index/config/jwt-secret]] — Token signing key
+- [[index/endpoint/POST-api-auth-login]] — Login endpoint
+
 ## References
 
-A future LLM reading this page must be able to **fetch the referenced thing without searching**. Every behavioral claim above gets at least one entry here. Format depends on what's referenced:
+A future LLM reading this page must be able to **fetch the referenced thing without searching**. Every behavioral claim in Details gets at least one entry here. The microindex notes linked above already carry the full `ref` — restate only when the topic page makes a claim about a specific line/method that the microindex doesn't already capture, or when the reference is outside the microindex (external URL, command, etc.). Reference taxonomy:
 
-- `internal/auth/middleware.go:42-58` — Validates JWT tokens; rejects expired
-- `cmd/server/main.go:120` — Wires the auth middleware
-- `class:ZCL_AUTH_HANDLER` (S/4HANA, package `ZAUTH`) — Handles SAML SSO login
-- `cds:Z_USER_VIEW` (CDS view, ABAP) — Surfaces user attrs to UI
-- `function:Z_USER_FETCH` (FuGr `ZUSR`) — Reads user master data
-- `config:auth.jwt.secret` in `.env` — Token signing key
-- `config:server.port` in `config/default.yaml`
+- `internal/auth/middleware.go:42-58` — file with line range
+- `class:ZCL_AUTH_HANDLER` (S/4HANA, package `ZAUTH`)
+- `cds:Z_USER_VIEW`
+- `function:Z_USER_FETCH` (FuGr `ZUSR`)
+- `config:auth.jwt.secret` in `.env`
 - `env:DATABASE_URL` defined in `docker-compose.yml`
-- `table:ZAUTH_LOG` (custom DB table) — Append-only audit log
+- `table:ZAUTH_LOG` (custom DB table)
 - `endpoint:POST /api/auth/login` (handled in `internal/auth/handler.go:18`)
+- `url:https://...` (RFC, blog, doc)
+- `command:make build`
 
 ## Gotchas
 
