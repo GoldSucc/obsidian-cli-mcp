@@ -363,6 +363,34 @@ views:
 - **Append over rewrite** for accumulating sections (`gotchas`, `references`, recent-changes). Use `obsidian_append`, not `obsidian_create overwrite=true`.
 - **Vault writes via MCP only.** Don't use `Write`/`Edit` for vault paths.
 
+## Delegate to the `documenter` subagent for heavy work
+
+This skill works two ways: parent agent executes inline for small ops, OR delegates to the `documenter` Sonnet subagent for heavier research + writes.
+
+**Inline (parent does directly)**:
+- Reading an existing theme's pages
+- Appending one gotcha or one source
+- Bumping `last-updated`
+- Quick lookup against the root `docs/_index.base` to see if a theme exists
+
+**Delegate to `documenter`**:
+- **Bootstrap** — creating a new theme from scratch (research + 6+ pages + `_index.base`)
+- **Research-heavy extend** — pulling in multiple sources via Context7/defuddle/WebSearch and synthesizing into existing pages
+- **Mass refactor** — restructuring a theme's subpages after the topic's mental model evolved
+- Anything that'd be >5 MCP write tool calls
+
+How to delegate:
+
+```
+Agent({
+  description: "Bootstrap docs/<theme>/",
+  subagent_type: "documenter",
+  prompt: "Bootstrap docs/<theme>/ in the vault. Theme: <subject-noun>. Scope: <one-line>. Subpages: overview, concepts, howto, examples, gotchas, references. Sources to use: <URLs / Context7 lib ids / books>. Use the document-theme skill spec. Cite every claim with sources frontmatter. Synthesize, don't paste."
+})
+```
+
+The agent runs on Sonnet (cheap + fast for structured-write workloads), invokes this skill itself, executes the bootstrap, returns a structured report listing paths created, sources used, gaps. Don't pass `model: opus` — `documenter` is sonnet by design.
+
 ## Anti-patterns
 
 - ❌ Project-specific gotchas in a theme — those go to `semantic-index/<project>/gotchas.md` via `index-project`.

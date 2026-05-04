@@ -254,6 +254,33 @@ All operations use the `obsidian-cli` MCP. Common calls:
 | Create the base | `mcp__obsidian-cli__obsidian_create path="semantic-index/<project>/_index.base" content="<yaml>"` |
 | Query the base | `mcp__obsidian-cli__obsidian_base_query path="semantic-index/<project>/_index.base" view="All topics" format=json` |
 
+## Delegate to the `documenter` subagent for heavy work
+
+This skill works two ways: parent agent executes inline for small ops, OR delegates to the `documenter` Sonnet subagent for heavier writes.
+
+**Inline (parent does directly)**:
+- Reading the index, 1-2 topic pages
+- Appending a single gotcha or decision
+- Bumping `last-updated` on one page
+- Quick search across the index
+
+**Delegate to `documenter`**:
+- **Bootstrap** — building the index for the first time (writes 6+ pages + `_index.base`)
+- **Mass extend** — updating many pages after a structural change (architecture migration, dependency overhaul)
+- Anything that'd be >5 MCP write tool calls
+
+How to delegate:
+
+```
+Agent({
+  description: "Bootstrap semantic-index/<project>/",
+  subagent_type: "documenter",
+  prompt: "Bootstrap semantic-index/<project>/ from the repo at <abs path>. Cover architecture, domain, conventions, gotchas, decisions, workflows. Ground every claim in path:line. Use the index-project skill spec. Sources: the repo itself."
+})
+```
+
+The agent runs on Sonnet (cheap + fast for the structured-write workload), invokes this skill itself, executes the bootstrap, returns a structured report. Don't pass `model: opus` when invoking — `documenter` is sonnet by design.
+
 ## Anti-patterns
 
 - ❌ Storing project knowledge in `~/.claude/.../memory/*.md`. Wrong store. Migrate to vault.
