@@ -391,6 +391,8 @@ Agent({
 
 The agent runs on Sonnet (cheap + fast for structured-write workloads), invokes this skill itself, executes the bootstrap, returns a structured report listing paths created, sources used, gaps. Don't pass `model: opus` — `documenter` is sonnet by design.
 
+**After `documenter` returns, immediately dispatch `verifier`** with `mode=themes` and the new/updated theme paths as `scope`. The verifier checks frontmatter (`theme`, `topic`, `last-updated`, `tags`, `sources`), structural completeness (README + `_index.base` + subpages), source citations, and wikilink resolution. ACCEPT or RE-DISPATCH per its recommendation.
+
 ## Anti-patterns
 
 - ❌ Project-specific gotchas in a theme — those go to `semantic-index/<project>/gotchas.md` via `index-project`.

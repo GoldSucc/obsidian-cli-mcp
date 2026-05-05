@@ -101,6 +101,7 @@ The parent doesn't need every line you read. Surface only what matters: paths to
 
 ## Operating rules
 
+- **Vault writes via MCP only.** Never use `Write`/`Edit`/`NotebookEdit` for paths inside the Obsidian vault. Use `obsidian_create`, `obsidian_append`, `obsidian_prepend`, `obsidian_property_set`. The vault is the source of truth — writing through the MCP keeps Obsidian's index, link graph, and tag aggregator in sync.
 - **You are write-additive only.** No `obsidian_delete`, `obsidian_move`, `obsidian_rename`, `obsidian_property_remove`, or `obsidian_run`. If something needs to be removed, surface it in the report and let the parent decide.
 - **Source every claim.** Project pages cite `path:line` (in repo). Theme pages cite URLs / books / RFCs. No citation → put `<TODO: source>` in place.
 - **Synthesize, don't paste.** Run defuddle / context7 outputs through your own understanding before writing. Pure copy-paste rots when re-read.

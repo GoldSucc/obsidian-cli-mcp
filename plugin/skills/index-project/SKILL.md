@@ -54,9 +54,11 @@ Why this order: the microindex is the ground truth — every fetchable unit with
 - Topic pages contain wikilinks to specific microindex notes (`[[index/<kind>/<name>]]`) under "Implements".
 - Microindex notes do NOT manually link back — Obsidian's auto-backlink graph handles the reverse direction. Use `obsidian_backlinks` from a microindex note to find all topic pages that reference it.
 
-## Step 1 — Microindexing (delegate to `microindexer`)
+## Step 1 — Microindexing (delegate to `microindexer`, then verify)
 
 Dispatch the `microindexer` agent first, before writing any topic pages. The agent walks every indexable unit and writes one tiny note per unit under `semantic-index/<project>/index/<kind>/<name>.md`. Each note is frontmatter + 1-line summary + anchors with inline `#topic/*` tags.
+
+**After `microindexer` returns, immediately dispatch `verifier`** with `mode=microindex` and the agent's reported paths as `scope`. The verifier (Sonnet, read-only) checks frontmatter, tag governance, anchor format, ref-graph completeness, wikilink resolution. If the report says RE-DISPATCH → re-run `microindexer` with the verifier's fix prompt. If ACCEPT → proceed to Step 2.
 
 Units include: source files (any language), ABAP repository objects (via the SAP ADT MCP), config keys (YAML/TOML/JSON/env), HTTP/RPC endpoints, DB schema objects, IaC modules (Terraform, K8s, Helm), feature flags, env vars. The agent picks the right source per unit (filesystem, MCP, DB introspection, …).
 
@@ -87,6 +89,8 @@ The microindex layout, note template, anchor format, granularity rules, and base
 9. **Confirm with user** — show the index map before declaring done.
 
 When the topic-page work is heavy (≥5 pages, lots of microindex notes to digest), delegate to the `documenter` agent. The agent's prompt should include: "First, read existing microindex at `semantic-index/<project>/index/`. Cluster microindex notes by tag/theme to identify topics. Each topic page must reference the microindex notes that implement it via wikilinks under `## Implements`."
+
+**After `documenter` returns, dispatch `verifier`** with `mode=topics` and the topic-page paths as `scope`. Same loop: ACCEPT or RE-DISPATCH with fix prompt.
 
 ## Re-running
 
@@ -198,12 +202,14 @@ If a reference doesn't fit a prefix, write `<your-prefix>:<id>` and add a parent
 
 ## Page rules
 
+- **Vault writes via MCP only.** Never use `Write`/`Edit`/`NotebookEdit` for vault paths. Use `obsidian_create`, `obsidian_append`, `obsidian_prepend`, `obsidian_property_set`. Same rule applies whether the parent writes inline or delegates to `documenter`/`microindexer`.
 - **Append over rewrite.** Knowledge accumulates. Don't lose history. Use `obsidian_append`, not `obsidian_create overwrite=true`.
 - **Wikilinks resolve by filename** — keep names unique within `semantic-index/<project>/`.
 - **Ground every claim in a reference.** Every assertion has at least one entry under `## References` or it doesn't go in the page. References must be fetchable (line range, object name, config key, env var, endpoint) — not vague pointers like "in the auth module".
 - **Caveman style**: short fragments, headings, tags, embeds. Match the user's vault style.
 - **Frontmatter fields** are typed via `obsidian_property_set`. `last-updated` is a `date`. `tags` is a `list`.
 - **Tag everything `#project/<name>`** — makes the project's index queryable from a Bases view across the vault.
+- **Carry `#ref/<NAME>` tags for the major units the page discusses.** Same `#ref/*` namespace as the microindex (see `microindexer` agent for the full convention). A topic page about authentication should tag `#ref/AuthHandler`, `#ref/JWTSigner`, `#ref/IF_AUTH_PROVIDER`, etc. Result: `obsidian_tag name=ref/AuthHandler verbose` returns the microindex note (self-tag) PLUS every microindex note that references it (outgoing) PLUS this topic page. The tag namespace becomes a project-wide dependency + documentation graph in one query.
 
 ## index.md template
 

@@ -47,6 +47,14 @@ func Run(ctx context.Context, a Args) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
+	// Propagate context cancellation distinctly. exec.CommandContext kills the
+	// subprocess when ctx is canceled; if we return a regular error here, the
+	// SDK sends a response for a request the client already abandoned, which
+	// corrupts the stdio message stream and closes the transport. Returning
+	// ctx.Err() lets the SDK skip the response.
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
 	if err != nil {
 		msg := strings.TrimSpace(stripPreamble(stderr.String()))
 		if msg == "" {

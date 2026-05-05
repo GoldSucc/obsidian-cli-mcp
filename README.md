@@ -9,7 +9,8 @@ MCP server + Claude Code plugin that wraps the official `obsidian` CLI and turns
 - **`index-project` skill** — Claude-maintained semantic index of code projects under `semantic-index/<project>/` in your vault. Linked notes, frontmatter, wikilinks. Survives sessions, compounds over time.
 - **`document-theme` skill** — general topic knowledge base under `docs/<theme>/` with `_index.base` dashboards. Subject-noun themes, source-cited (Context7, defuddle, web), reusable across projects.
 - **`documenter` subagent** (Sonnet) — specialized for mass-indexing and theme documentation. Parent Opus delegates focused doc tasks; documenter executes against the skills.
-- **`microindexer` subagent** (Haiku) — second-step indexer that walks every **indexable unit** in a project — source files, ABAP repository objects (via SAP ADT MCP), config keys, env vars, HTTP endpoints, DB tables, IaC modules — and creates one tiny semantic-only note per unit under `semantic-index/<project>/index/<kind>/<name>.md`. Each note is frontmatter + 1-line summary + anchors with inline `#topic/*` tags. Designed for retrieval, not reading — a queryable "semantic LSP" so Claude can ask "what implements login?" via `obsidian_tag` and get the full list of relevant units regardless of where they live.
+- **`microindexer` subagent** (Haiku) — first-step indexer that walks every **indexable unit** in a project — source files, ABAP repository objects (via SAP ADT MCP), config keys, env vars, HTTP endpoints, DB tables, IaC modules — and creates one tiny semantic-only note per unit under `semantic-index/<project>/index/<kind>/<name>.md`. Each note is frontmatter + 1-line summary + anchors with inline `#topic/*` and `#ref/*` tags. Designed for retrieval, not reading — a queryable "semantic LSP" so Claude can ask "what implements login?" via `obsidian_tag` and get the full list of relevant units regardless of where they live.
+- **`verifier` subagent** (Sonnet) — read-only QA pass that runs after every `documenter` or `microindexer` dispatch. Validates frontmatter completeness, tag governance (`#topic/*` reuse + naming, `#ref/<self>` self-tag, `#kind/*` consistency), anchor format, wikilink resolution, source citations. Produces a structured report with severity-tiered issues and an ACCEPT / RE-DISPATCH / HAND-FIX recommendation.
 - **SessionStart hook** — auto-injects the project's `index.md` at session start so Claude opens with full context.
 
 See [`docs/index.md`](docs/index.md) for architecture, full tool reference, and dev notes.
@@ -187,8 +188,30 @@ Agent({
 
 The agent runs on Haiku (cheap mass scanning), produces hundreds of small notes, returns a count-by-kind report.
 
+### `verifier` — Sonnet QA pass after every writer dispatch
+
+After any `documenter` or `microindexer` run, dispatch `verifier` immediately:
+
+```
+Agent({
+  description: "Verify microindex quality",
+  subagent_type: "verifier",
+  prompt: "Mode: microindex. Scope: <paths from microindexer report OR semantic-index/<project>/index/>. Baseline tags: <pre-run #topic/* snapshot if available>."
+})
+```
+
+Modes: `microindex` (post-microindexer), `topics` (post-documenter on `semantic-index/<project>/<topic>.md`), `themes` (post-documenter on `docs/<theme>/`).
+
+The verifier reads the new/updated notes, checks them against the convention rules in the relevant skill/agent file, returns a ≤80-line report with three severity tiers (error / warn / info) and one of three recommendations:
+
+- **ACCEPT** — no blocking issues, proceed.
+- **RE-DISPATCH** — convention violations require another writer run; the report includes a one-line fix prompt to pass back.
+- **HAND-FIX** — small set of issues, parent corrects inline.
+
+Verifier is read-only — it never modifies vault notes. It exists to keep the index queryable as it grows.
+
 > [!info] Don't override agent models
-> Both agents pin a model in their definition: `documenter` is Sonnet, `microindexer` is Haiku. Don't pass `model: opus` when invoking — that defeats the cost split. Pass only `subagent_type` and `prompt`.
+> All three pinned agents (`documenter` = Sonnet, `microindexer` = Haiku, `verifier` = Sonnet) declare `model:` in frontmatter. Don't pass `model: opus` when invoking — that overrides the pin and defeats the cost split. Pass only `subagent_type`, `description`, `prompt`.
 
 ### Triggering paths summary
 

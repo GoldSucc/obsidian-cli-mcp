@@ -148,17 +148,30 @@ def main():
             ("topic", "Topics (`#topic/*`)"),
             ("project", "Projects (`#project/*`)"),
             ("subsystem", "Subsystems (`#subsystem/*`)"),
+            ("kind", "Kinds (`#kind/*`)"),
             ("docs", "Doc anchors (`#docs/*`)"),
         ):
             tags = grouped.get(ns, [])
             if not tags:
                 continue
             tax_lines.append(f"### {label}\n{fmt_tag_list(tags, limit=20)}")
+        # Refs are mechanical (one per indexed object) — surface count + top examples.
+        ref_tags = grouped.get("ref", [])
+        if ref_tags:
+            top_refs = ", ".join(f"`{t}` ({c})" for t, c in ref_tags[:5])
+            tax_lines.append(
+                f"### References (`#ref/*`)\n"
+                f"{len(ref_tags)} ref tag(s) across the vault — `#ref/<NAME>` is the dependency-graph namespace. "
+                f"Each microindex note carries `#ref/<self>` plus one `#ref/<dep>` per outgoing reference. "
+                f"Query a single object's call graph with `obsidian_tag name=\"ref/<NAME>\" verbose`. "
+                f"Top: {top_refs}."
+            )
         if tax_lines:
             sections.append(
                 "## Tag taxonomy (live, vault-wide)\n\n"
                 "Drill into any tag below for filtered content. Discovery patterns:\n"
-                "- Files for a tag: `obsidian_tag name=\"topic/<x>\" verbose`\n"
+                "- Files for a topic tag: `obsidian_tag name=\"topic/<x>\" verbose`\n"
+                "- **Dependency / call graph**: `obsidian_tag name=\"ref/<OBJECT_NAME>\" verbose` — returns the object's microindex note (self-tag) AND every unit that references it (outgoing). Use this BEFORE grepping the codebase.\n"
                 "- Content search scoped to docs: `obsidian_search query=\"<text>\" path=\"docs\"`\n"
                 "- With surrounding context: `obsidian_search_context query=\"<text>\" path=\"docs\"`\n"
                 "- Outline a page: `obsidian_outline path=\"docs/<theme>/<page>.md\" format=md`\n\n"
