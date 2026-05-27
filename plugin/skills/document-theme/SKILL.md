@@ -1,6 +1,6 @@
 ---
 name: document-theme
-description: Build, extend, and maintain a personal knowledge base on a general topic ("theme") — OAuth flows, Kubernetes networking, Rust async, PostgreSQL replication, ABAP CDS, etc. Researches via web, library docs, and user input; produces structured, linked markdown in the Obsidian vault under `docs/<theme>/` with an `_index.base` dashboard. Topic-scoped, NOT project-scoped (project knowledge belongs to `index-project`). TRIGGER on: "document <topic>", "research and write up <X>", "build a knowledge base on <Y>", "explain <Z> and save it for future reference", "compile notes on <subject>", extending an existing `docs/<theme>/`.
+description: "Build, extend, and maintain a personal knowledge base on a general topic (\"theme\") — OAuth flows, Kubernetes networking, Rust async, PostgreSQL replication, ABAP CDS, etc. Researches via web, library docs, and user input; produces structured, linked markdown in the Obsidian vault under `docs/<theme>/` with an `_index.base` dashboard. Topic-scoped, NOT project-scoped (project knowledge belongs to `index-project`). TRIGGER on: \"document <topic>\", \"research and write up <X>\", \"build a knowledge base on <Y>\", \"explain <Z> and save it for future reference\", \"compile notes on <subject>\", extending an existing `docs/<theme>/`."
 
 ---
 

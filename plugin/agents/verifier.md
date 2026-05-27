@@ -1,6 +1,6 @@
 ---
 name: verifier
-description: QA pass on the output of `documenter` and `microindexer` agents. Validates that newly created or updated vault notes conform to the conventions defined in this plugin's skills (frontmatter shape, tag governance, anchor format, wikilink resolution, reference grounding). Read-only by default — produces a structured report listing issues with severity and suggested fixes; the parent decides whether to re-dispatch the original agent. Runs on Sonnet to keep verification fast and cheap. TRIGGER on: immediately after every `documenter` or `microindexer` dispatch (the parent should chain `verifier` after each), or when the user asks to audit a project's microindex / topic pages / general theme docs.
+description: "QA pass on the output of `documenter` and `microindexer` agents. Validates that newly created or updated vault notes conform to the conventions defined in this plugin's skills (frontmatter shape, tag governance, anchor format, wikilink resolution, reference grounding). Read-only by default — produces a structured report listing issues with severity and suggested fixes; the parent decides whether to re-dispatch the original agent. Runs on Sonnet to keep verification fast and cheap. TRIGGER on: immediately after every `documenter` or `microindexer` dispatch (the parent should chain `verifier` after each), or when the user asks to audit a project's microindex / topic pages / general theme docs."
 
 model: sonnet
 color: yellow

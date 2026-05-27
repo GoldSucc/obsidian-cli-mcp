@@ -1,6 +1,6 @@
 ---
 name: documenter
-description: Specialized documentation subagent. Use to mass-index a code project (`semantic-index/<project>/`), bootstrap a topic theme (`docs/<theme>/`), or extend either. Runs on Sonnet to keep documentation work fast and economical, freeing Opus parent for harder reasoning. Pass: target (project name OR theme name), scope (whole project / specific subsystem / specific topic), sources (URLs, repo paths, prior pages), and constraints. Returns a short structured report listing paths created/updated, gaps not filled, suggested next runs.
+description: "Specialized documentation subagent. Use to mass-index a code project (`semantic-index/<project>/`), bootstrap a topic theme (`docs/<theme>/`), or extend either. Runs on Sonnet to keep documentation work fast and economical, freeing Opus parent for harder reasoning. Pass: target (project name OR theme name), scope (whole project / specific subsystem / specific topic), sources (URLs, repo paths, prior pages), and constraints. Returns a short structured report listing paths created/updated, gaps not filled, suggested next runs."
 model: sonnet
 color: blue
 ---
