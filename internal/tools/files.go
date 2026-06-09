@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,29 @@ func (t FileTarget) params() map[string]string {
 	return p
 }
 
+// resolvePath returns the exact vault-relative path for a target. A path is used
+// as-is; a file (wikilink-style) is resolved through the CLI's `file` command,
+// whose first output line is `path\t<path>`. Overwrite-based tools need a real
+// path because the CLI `create` command keys off name/path, not wikilink names.
+func resolvePath(ctx context.Context, vault string, t FileTarget) (string, error) {
+	if t.Path != "" {
+		return t.Path, nil
+	}
+	if t.File == "" {
+		return "", fmt.Errorf("file or path is required")
+	}
+	out, err := exec.Run(ctx, exec.Args{Command: "file", Vault: vault, Params: map[string]string{"file": t.File}})
+	if err != nil {
+		return "", err
+	}
+	for line := range strings.SplitSeq(out, "\n") {
+		if rest, ok := strings.CutPrefix(line, "path\t"); ok {
+			return strings.TrimSpace(rest), nil
+		}
+	}
+	return "", fmt.Errorf("could not resolve path for file %q", t.File)
+}
+
 type ReadInput struct {
 	FileTarget
 }
@@ -49,7 +73,6 @@ type CreateInput struct {
 	Path     string `json:"path,omitempty" jsonschema:"explicit path from vault root"`
 	Content  string `json:"content,omitempty" jsonschema:"initial file content; real newlines are accepted"`
 	Template string `json:"template,omitempty" jsonschema:"template name to use"`
-	Overwrite bool  `json:"overwrite,omitempty" jsonschema:"overwrite if file exists"`
 	Open      bool  `json:"open,omitempty" jsonschema:"open file after creation"`
 	NewTab    bool  `json:"newtab,omitempty" jsonschema:"open in new tab (implies open)"`
 }
@@ -69,9 +92,6 @@ func createHandler(ctx context.Context, _ *mcp.CallToolRequest, in CreateInput) 
 		params["template"] = in.Template
 	}
 	flags := []string{}
-	if in.Overwrite {
-		flags = append(flags, "overwrite")
-	}
 	if in.Open {
 		flags = append(flags, "open")
 	}
@@ -83,6 +103,79 @@ func createHandler(ctx context.Context, _ *mcp.CallToolRequest, in CreateInput) 
 		return nil, TextOutput{}, err
 	}
 	return nil, TextOutput{Content: out}, nil
+}
+
+// overwrite writes content to a resolved path via the CLI `create` command with
+// the overwrite flag. This is the shared primitive behind replace and edit.
+func overwrite(ctx context.Context, vault, path, content string) (string, error) {
+	params := map[string]string{
+		"path":    path,
+		"content": exec.EncodeMultiline(content),
+	}
+	return exec.Run(ctx, exec.Args{Command: "create", Vault: vault, Params: params, Flags: []string{"overwrite"}})
+}
+
+type ReplaceInput struct {
+	FileTarget
+	Content string `json:"content" jsonschema:"full replacement content for the entire note; real newlines accepted"`
+}
+
+func replaceHandler(ctx context.Context, _ *mcp.CallToolRequest, in ReplaceInput) (*mcp.CallToolResult, TextOutput, error) {
+	path, err := resolvePath(ctx, in.Vault, in.FileTarget)
+	if err != nil {
+		return nil, TextOutput{}, err
+	}
+	out, err := overwrite(ctx, in.Vault, path, in.Content)
+	if err != nil {
+		return nil, TextOutput{}, err
+	}
+	return nil, TextOutput{Content: out}, nil
+}
+
+type EditInput struct {
+	FileTarget
+	OldString  string `json:"old_string" jsonschema:"exact text to find; must match including whitespace and be unique unless replace_all is set"`
+	NewString  string `json:"new_string" jsonschema:"text to replace it with; must differ from old_string"`
+	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema:"replace every occurrence instead of requiring a single unique match"`
+}
+
+func editHandler(ctx context.Context, _ *mcp.CallToolRequest, in EditInput) (*mcp.CallToolResult, TextOutput, error) {
+	if in.OldString == in.NewString {
+		return nil, TextOutput{}, fmt.Errorf("old_string and new_string are identical")
+	}
+	path, err := resolvePath(ctx, in.Vault, in.FileTarget)
+	if err != nil {
+		return nil, TextOutput{}, err
+	}
+	content, err := exec.Run(ctx, exec.Args{Command: "read", Vault: in.Vault, Params: map[string]string{"path": path}})
+	if err != nil {
+		return nil, TextOutput{}, err
+	}
+	count := strings.Count(content, in.OldString)
+	if count == 0 {
+		return nil, TextOutput{}, fmt.Errorf("old_string not found in %s", path)
+	}
+	if !in.ReplaceAll && count > 1 {
+		return nil, TextOutput{}, fmt.Errorf("old_string is not unique in %s (%d matches); add more surrounding context or set replace_all", path, count)
+	}
+	var updated string
+	if in.ReplaceAll {
+		updated = strings.ReplaceAll(content, in.OldString, in.NewString)
+	} else {
+		updated = strings.Replace(content, in.OldString, in.NewString, 1)
+	}
+	if _, err := overwrite(ctx, in.Vault, path, updated); err != nil {
+		return nil, TextOutput{}, err
+	}
+	noun := "match"
+	if count > 1 {
+		noun = "matches"
+	}
+	verb := "Replaced 1"
+	if in.ReplaceAll {
+		verb = fmt.Sprintf("Replaced %d", count)
+	}
+	return nil, TextOutput{Content: fmt.Sprintf("%s %s in %s", verb, noun, path)}, nil
 }
 
 type AppendInput struct {
@@ -249,8 +342,16 @@ func RegisterFiles(s *mcp.Server) {
 	}, readHandler)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "obsidian_create",
-		Description: "Create a new note. Use name (auto-folder by templates) or path (explicit). Optional content, template, overwrite/open/newtab flags.",
+		Description: "Create a NEW note. Use name (auto-folder by templates) or path (explicit). Optional content, template, open/newtab flags. Fails if the note already exists — use obsidian_edit (partial change) or obsidian_replace (full rewrite) to modify existing notes.",
 	}, createHandler)
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "obsidian_replace",
+		Description: "Replace the ENTIRE content of an existing note with new content. Target by file (wikilink-style) or path (exact). For changing only part of a note, prefer obsidian_edit.",
+	}, replaceHandler)
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "obsidian_edit",
+		Description: "Change PART of a note via exact string replacement (Claude-Edit style). Provide old_string (must match exactly, including whitespace, and be unique unless replace_all=true) and new_string. Target by file (wikilink-style) or path (exact).",
+	}, editHandler)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "obsidian_append",
 		Description: "Append content to a note. inline=true skips the leading newline.",
