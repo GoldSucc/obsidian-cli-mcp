@@ -2,7 +2,10 @@ package tools
 
 import (
 	"context"
+	"fmt"
+	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/GoldSucc/obsidian-cli-mcp/internal/exec"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -77,7 +80,66 @@ func searchContextHandler(ctx context.Context, _ *mcp.CallToolRequest, in Search
 	if err != nil {
 		return nil, TextOutput{}, err
 	}
+	// json is a structured passthrough; only reshape the human-readable text view.
+	if in.Format != "json" {
+		out = groupSearchContext(out)
+	}
 	return nil, TextOutput{Content: out}, nil
+}
+
+// contextLineRe splits a `search:context` line into path, line number, and the
+// matched text. The non-greedy path anchors on the first `:<digits>:` segment so
+// colons in either the path or the content do not break the parse.
+var contextLineRe = regexp.MustCompile(`^(.+?):(\d+):\s?(.*)$`)
+
+// groupSearchContext collapses the per-match `search:context` output into one
+// block per note: the note path, its match count, and the first matching line.
+// Identical (path, line) entries are de-duplicated so the count is not inflated
+// by the CLI emitting the same line more than once.
+func groupSearchContext(raw string) string {
+	type note struct {
+		path    string
+		first   string
+		matches int
+		seen    map[string]bool
+	}
+	order := []string{}
+	notes := map[string]*note{}
+	for ln := range strings.SplitSeq(strings.TrimRight(raw, "\n"), "\n") {
+		m := contextLineRe.FindStringSubmatch(ln)
+		if m == nil {
+			continue
+		}
+		path, lineNo, content := m[1], m[2], m[3]
+		n, ok := notes[path]
+		if !ok {
+			n = &note{path: path, seen: map[string]bool{}}
+			notes[path] = n
+			order = append(order, path)
+		}
+		key := lineNo + "\x00" + content
+		if n.seen[key] {
+			continue
+		}
+		n.seen[key] = true
+		n.matches++
+		if n.first == "" {
+			n.first = "L" + lineNo + ": " + content
+		}
+	}
+	var b strings.Builder
+	for i, path := range order {
+		n := notes[path]
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		unit := "matches"
+		if n.matches == 1 {
+			unit = "match"
+		}
+		fmt.Fprintf(&b, "%s  (%d %s)\n  %s\n", n.path, n.matches, unit, n.first)
+	}
+	return b.String()
 }
 
 type SearchOpenInput struct {
@@ -104,7 +166,7 @@ func RegisterSearch(s *mcp.Server) {
 	}, searchHandler)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "obsidian_search_context",
-		Description: "Search vault and return matching lines with surrounding context. Optional path, limit, case, format.",
+		Description: "Search vault and return a list of matching notes, each with its match count and the first matching line. Optional path, limit, case. Use format=json for the raw per-match list.",
 	}, searchContextHandler)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "obsidian_search_open",
