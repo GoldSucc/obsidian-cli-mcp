@@ -48,9 +48,11 @@ Responsibilities:
 - Capture stdout / stderr separately
 - Strip stderr preamble (Obsidian writes `Loading updated app package...` and `Your Obsidian installer is out of date...` on every invocation — these are not errors)
 - On non-zero exit, wrap stripped stderr as Go error
+- Classify single-line `Error: ...` stdout as failure (CLI reports most failures with exit code 0); multi-line output starting with "Error:" is treated as note content
+- Bound every invocation with a timeout (30s default, `OBSIDIAN_MCP_TIMEOUT` seconds to override) so a hung Obsidian app can't hang a request
 - Honour `OBSIDIAN_DEFAULT_VAULT` env var when `Vault` is empty
 
-There's also `exec.EncodeMultiline(s)` — converts real `\n` / `\t` chars in JSON input to the literal escape sequences the Obsidian CLI expects.
+Content transport: `exec.EncodeMultiline(s)` converts real `\n` / `\t` chars to the literal escape sequences the CLI expects, but only content passing `exec.CLISafe` (no backslashes) survives that channel losslessly. Unsafe content is written straight into the vault via `exec.WriteFileDirect`, containment-checked by `exec.SecureJoin`.
 
 ## Tool group pattern
 

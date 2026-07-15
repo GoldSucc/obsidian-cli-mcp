@@ -6,8 +6,12 @@ All tools are stdio MCP tools, prefix `mcp__obsidian-cli__`. Names below omit th
 
 | Tool | CLI | Purpose |
 |---|---|---|
-| `obsidian_read` | `read` | Full contents of a note |
+| `obsidian_read` | `read` | Full contents of a note; `frontmatter_only`/`body_only` narrow it |
+| `obsidian_read_many` | — (direct FS) | Batch read by paths, one call; same narrowing flags |
 | `obsidian_create` | `create` | New note (name or path) |
+| `obsidian_replace` | `create` +overwrite | Replace entire note content |
+| `obsidian_edit` | `read`+`create` | Exact-string partial edit (Claude-Edit style) |
+| `obsidian_insert` | `read`+`create` | Insert inside a section targeted by heading text; `position=start\|end` |
 | `obsidian_append` | `append` | Add content to end |
 | `obsidian_prepend` | `prepend` | Add content to start |
 | `obsidian_move` | `move` | Move/rename via path |
@@ -15,7 +19,10 @@ All tools are stdio MCP tools, prefix `mcp__obsidian-cli__`. Names below omit th
 | `obsidian_delete` | `delete` | Trash by default; `permanent=true` skips trash |
 | `obsidian_file_info` | `file` | Metadata (size, dates) |
 | `obsidian_files_list` | `files` | List files; folder/ext filter |
+| `obsidian_files_query` | — (direct FS) | Find notes by frontmatter property filters (eq/ne/contains/lt/gt/exists/missing) |
 | `obsidian_wordcount` | `wordcount` | Words and/or characters |
+
+Content containing backslashes (`C:\x`, LaTeX, regex) cannot pass through the CLI's `content=` channel losslessly; write tools detect this and write directly into the vault filesystem instead (Obsidian picks the change up via its file watcher).
 
 ## Folders
 
@@ -39,7 +46,7 @@ All tools are stdio MCP tools, prefix `mcp__obsidian-cli__`. Names below omit th
 | Tool | CLI | Notes |
 |---|---|---|
 | `obsidian_search` | `search` | Returns matching files |
-| `obsidian_search_context` | `search:context` | Returns matching lines + surrounding context |
+| `obsidian_search_context` | `search:context` | Grouped per-note matches; `total=true` returns counts only |
 | `obsidian_search_open` | `search:open` | Opens search panel in app |
 
 ## Tasks
@@ -63,6 +70,7 @@ All tools are stdio MCP tools, prefix `mcp__obsidian-cli__`. Names below omit th
 | Tool | CLI |
 |---|---|
 | `obsidian_tag` | `tag` |
+| `obsidian_tag_query` | `tag` ×N | set algebra: `all` (AND) / `any` (OR) / `none` (NOT), optional `path_prefix` |
 | `obsidian_tags` | `tags` |
 | `obsidian_aliases` | `aliases` |
 | `obsidian_links` | `links` |

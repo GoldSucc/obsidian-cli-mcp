@@ -26,9 +26,10 @@ import os
 import subprocess
 import sys
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 
-def cli(*args: str, timeout: int = 6) -> str:
+def cli(*args: str, timeout: int = 4) -> str:
     """Run obsidian CLI, return stripped stdout. Empty string on any failure."""
     try:
         result = subprocess.run(
@@ -121,8 +122,17 @@ def main():
 
     sections: list[str] = []
 
+    # All four vault reads are independent; run them concurrently so the
+    # worst case stays one CLI-call timeout, not their sum — the hook itself
+    # runs under a hard timeout from hooks.json.
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        themes_future = pool.submit(list_themes)
+        tags_future = pool.submit(collect_tags)
+        index_future = pool.submit(cli, "read", f"path=semantic-index/{project_guess}/index.md")
+        micro_future = pool.submit(cli, "files", f"folder=semantic-index/{project_guess}", "ext=md")
+
     # 1. Live theme catalogue
-    themes = list_themes()
+    themes = themes_future.result()
     if themes:
         theme_list = "\n".join(f"- `[[docs/{t}/README]]` — `{t}`" for t in themes)
         sections.append(
@@ -139,7 +149,7 @@ def main():
         )
 
     # 2. Tag taxonomy — drives content/topic discovery
-    grouped = collect_tags()
+    grouped = tags_future.result()
     if grouped:
         tax_lines: list[str] = []
         # Show the meaningful namespaces first.
@@ -179,7 +189,7 @@ def main():
             )
 
     # 3. Project semantic index
-    project_index = cli("read", f"path=semantic-index/{project_guess}/index.md")
+    project_index = index_future.result()
     if project_index:
         sections.append(
             f"## Project semantic index — `{project_guess}`\n\n"
@@ -204,32 +214,43 @@ def main():
         )
 
     # 4. Microindex (semantic LSP) — advertise query workflow and current state
-    micro_files = cli("files", f"folder=semantic-index/{project_guess}/index", "ext=md")
+    # Two valid layouts: flat  semantic-index/<project>/index/<kind>/<name>.md
+    #          and modular  semantic-index/<project>/<module>/index/<kind>/<name>.md
+    micro_files = micro_future.result()
     micro_count = 0
     micro_kinds: dict[str, int] = defaultdict(int)
+    micro_modules: set[str] = set()
     if micro_files:
         for line in micro_files.splitlines():
             line = line.strip()
             if not line.endswith(".md"):
                 continue
-            micro_count += 1
-            # path: semantic-index/<project>/index/<kind>/<name>.md  →  kind = third segment from base
             parts = line.split("/")
-            if len(parts) >= 4 and parts[0] == "semantic-index" and parts[2] == "index":
-                kind = parts[3] if len(parts) >= 5 else "_root"
-                micro_kinds[kind] += 1
+            if parts[0] != "semantic-index" or "index" not in parts:
+                continue
+            i = parts.index("index")
+            if i < 2:
+                continue
+            micro_count += 1
+            kind = parts[i + 1] if len(parts) > i + 2 else "_root"
+            micro_kinds[kind] += 1
+            if i > 2:
+                micro_modules.add("/".join(parts[2:i]))
 
     if micro_count > 0:
         kind_summary = ", ".join(f"{k} ({n})" for k, n in sorted(micro_kinds.items(), key=lambda x: -x[1]))
+        module_note = ""
+        if micro_modules:
+            module_note = f" Modular layout — modules: {', '.join(sorted(micro_modules))}."
         sections.append(
             f"## Microindex (semantic LSP) — `{project_guess}` has {micro_count} indexed unit(s)\n\n"
-            f"Live count from `semantic-index/{project_guess}/index/`. Breakdown: {kind_summary}.\n\n"
+            f"Live count from `semantic-index/{project_guess}/`. Breakdown: {kind_summary}.{module_note}\n\n"
             "**Query the microindex BEFORE exploring blindly.** Each indexed unit — source file, ABAP "
             "object, config key, env var, endpoint, DB table, IaC module, etc. — is a tiny note with "
             "`#topic/*` tags + anchors, designed for retrieval, not reading.\n\n"
             "Search workflow:\n\n"
-            f"1. **Tag-first** — `obsidian_tag name=\"topic/<x>\" verbose path=\"semantic-index/{project_guess}/index\"` returns every indexed unit touching the topic.\n"
-            f"2. **Read the matching microindex notes** — `obsidian_read path=\"semantic-index/{project_guess}/index/<kind>/<name>.md\"` shows the anchors and the fetchable `ref`.\n"
+            f"1. **Tag-first** — `obsidian_tag_query all=[\"topic/<x>\"] path_prefix=\"semantic-index/{project_guess}\"` returns every indexed unit touching the topic; combine tags with all/any/none for precise slices (e.g. all=[\"kind/clas\", \"topic/auth\"]).\n"
+            f"2. **Read the matching microindex notes** — `obsidian_read_many paths=[...]` on the result (microindex notes are tiny; frontmatter_only=true is usually enough) shows the anchors and the fetchable `ref`.\n"
             "3. **Fetch the actual unit** — use the `ref` from the note. For source files: `Read path=...:lines`. For ABAP: `mcp__plugin_vsp_sap-adt__GetSource`. For configs: `Read` the file, find the key. The reference taxonomy in the note tells you which tool fits.\n\n"
             "Other entry points:\n\n"
             f"- Content search: `obsidian_search_context query=\"<text>\" path=\"semantic-index/{project_guess}/index\"` — returns matching anchor lines with surrounding context.\n"
@@ -240,7 +261,7 @@ def main():
     else:
         sections.append(
             f"## Microindex (semantic LSP) — none yet for `{project_guess}`\n\n"
-            f"No `semantic-index/{project_guess}/index/` folder. The microindex is the per-unit retrieval layer — "
+            f"No `index/` folder under `semantic-index/{project_guess}/` (flat or modular layout). The microindex is the per-unit retrieval layer — "
             "one tiny note per indexable unit (source file, ABAP class/CDS/BDef via MCP, config key, env var, "
             "HTTP endpoint, DB table, IaC module — anything fetchable) with `#topic/*` tags and anchors. "
             "Without it, Claude has to re-discover the project every session.\n\n"

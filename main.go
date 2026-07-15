@@ -11,11 +11,13 @@ import (
 func main() {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "obsidian-cli-mcp",
-		Version: "0.7.5",
+		Version: "0.9.0",
 	}, nil)
 
 	tools.RegisterGeneric(server)
 	tools.RegisterFiles(server)
+	tools.RegisterInsert(server)
+	tools.RegisterQuery(server)
 	tools.RegisterFolders(server)
 	tools.RegisterDaily(server)
 	tools.RegisterSearch(server)

@@ -55,6 +55,7 @@ type SearchContextInput struct {
 	Path   string `json:"path,omitempty" jsonschema:"restrict search to a folder under the vault root"`
 	Limit  int    `json:"limit,omitempty" jsonschema:"maximum number of results to return"`
 	Case   bool   `json:"case,omitempty" jsonschema:"case-sensitive matching"`
+	Total  bool   `json:"total,omitempty" jsonschema:"return only the note and match counts"`
 	Format string `json:"format,omitempty" jsonschema:"output format: text or json"`
 }
 
@@ -81,10 +82,31 @@ func searchContextHandler(ctx context.Context, _ *mcp.CallToolRequest, in Search
 		return nil, TextOutput{}, err
 	}
 	// json is a structured passthrough; only reshape the human-readable text view.
-	if in.Format != "json" {
+	if in.Total {
+		out = summarizeSearchContext(out)
+	} else if in.Format != "json" {
 		out = groupSearchContext(out)
 	}
 	return nil, TextOutput{Content: out}, nil
+}
+
+// summarizeSearchContext reduces `search:context` output to counts. The CLI
+// has no total flag for this command, so the reduction happens here.
+func summarizeSearchContext(raw string) string {
+	notes := map[string]bool{}
+	seen := map[string]bool{}
+	for ln := range strings.SplitSeq(strings.TrimRight(raw, "\n"), "\n") {
+		m := contextLineRe.FindStringSubmatch(ln)
+		if m == nil {
+			continue
+		}
+		if seen[ln] {
+			continue
+		}
+		seen[ln] = true
+		notes[m[1]] = true
+	}
+	return fmt.Sprintf("%d notes, %d matches", len(notes), len(seen))
 }
 
 // contextLineRe splits a `search:context` line into path, line number, and the

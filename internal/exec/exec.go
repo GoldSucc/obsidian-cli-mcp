@@ -6,11 +6,28 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const Binary = "obsidian"
+
+// defaultTimeout bounds a single CLI invocation. The CLI talks to the Obsidian
+// app over IPC; when the app is hung or quitting, the call can block forever
+// without this. Override with OBSIDIAN_MCP_TIMEOUT (seconds).
+const defaultTimeout = 30 * time.Second
+
+func runTimeout() time.Duration {
+	if v := os.Getenv("OBSIDIAN_MCP_TIMEOUT"); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return defaultTimeout
+}
 
 type Args struct {
 	Command string
@@ -42,7 +59,9 @@ func Run(ctx context.Context, a Args) (string, error) {
 	}
 	cliArgs = append(cliArgs, a.Flags...)
 
-	cmd := exec.CommandContext(ctx, Binary, cliArgs...)
+	runCtx, cancel := context.WithTimeout(ctx, runTimeout())
+	defer cancel()
+	cmd := exec.CommandContext(runCtx, Binary, cliArgs...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -55,6 +74,9 @@ func Run(ctx context.Context, a Args) (string, error) {
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
+	if runCtx.Err() == context.DeadlineExceeded {
+		return "", fmt.Errorf("obsidian %s: timed out after %s — is the Obsidian app running?", a.Command, runTimeout())
+	}
 	if err != nil {
 		msg := strings.TrimSpace(stripPreamble(stderr.String()))
 		if msg == "" {
@@ -63,11 +85,23 @@ func Run(ctx context.Context, a Args) (string, error) {
 		return "", fmt.Errorf("obsidian %s: %s", a.Command, msg)
 	}
 	out := stdout.String()
-	// CLI reports many failures via stdout with exit code 0, prefixed `Error:`.
-	if trimmed := strings.TrimSpace(out); strings.HasPrefix(trimmed, "Error:") {
-		return "", fmt.Errorf("obsidian %s: %s", a.Command, trimmed)
+	if msg := stdoutError(out); msg != "" {
+		return "", fmt.Errorf("obsidian %s: %s", a.Command, msg)
 	}
 	return out, nil
+}
+
+// stdoutError classifies CLI output that reports a failure despite exit code 0.
+// The CLI prints single-line `Error: ...` messages to stdout for most failures
+// (missing file, unknown tag, ...). Only a single-line match counts: multi-line
+// output starting with "Error:" is far more likely to be real note content
+// (incident logs, troubleshooting notes) returned by read/search commands.
+func stdoutError(out string) string {
+	trimmed := strings.TrimSpace(out)
+	if strings.HasPrefix(trimmed, "Error:") && !strings.Contains(trimmed, "\n") {
+		return trimmed
+	}
+	return ""
 }
 
 func VaultPath(ctx context.Context, vault string) (string, error) {
@@ -102,8 +136,55 @@ func stripPreamble(s string) string {
 	return strings.Join(out, "\n")
 }
 
+// CLISafe reports whether content survives the CLI `content=` round-trip.
+// The CLI decodes literal \n and \t sequences into real whitespace with a
+// blind replace and has no escape for the backslash itself, so content
+// containing any backslash cannot be encoded losslessly — `C:\notes`,
+// LaTeX `\newcommand`, and regex snippets would come back corrupted.
+// Such content must be written via WriteFileDirect instead.
+func CLISafe(s string) bool {
+	return !strings.Contains(s, `\`)
+}
+
+// EncodeMultiline prepares CLI-safe content (see CLISafe) for the `content=`
+// parameter. Callers must check CLISafe first: for content containing
+// backslashes this encoding is lossy.
 func EncodeMultiline(s string) string {
 	s = strings.ReplaceAll(s, "\n", `\n`)
 	s = strings.ReplaceAll(s, "\t", `\t`)
 	return s
+}
+
+// SecureJoin resolves rel against root and rejects any result that escapes
+// root (e.g. via `..` segments).
+func SecureJoin(root, rel string) (string, error) {
+	abs := filepath.Join(root, rel)
+	r, err := filepath.Rel(root, abs)
+	if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q escapes the vault", rel)
+	}
+	return abs, nil
+}
+
+// WriteFileDirect writes content straight into the vault filesystem, for
+// content the CLI cannot transport losslessly (see CLISafe). Obsidian picks
+// the change up through its file watcher.
+func WriteFileDirect(ctx context.Context, vault, rel, content string, overwrite bool) error {
+	root, err := VaultPath(ctx, vault)
+	if err != nil {
+		return err
+	}
+	abs, err := SecureJoin(root, rel)
+	if err != nil {
+		return err
+	}
+	if !overwrite {
+		if _, statErr := os.Stat(abs); statErr == nil {
+			return fmt.Errorf("file already exists: %s", rel)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(abs, []byte(content), 0o644)
 }

@@ -28,18 +28,19 @@ func (t FileTarget) params() map[string]string {
 	return p
 }
 
-// resolvePath returns the exact vault-relative path for a target. A path is used
-// as-is; a file (wikilink-style) is resolved through the CLI's `file` command,
-// whose first output line is `path\t<path>`. Overwrite-based tools need a real
-// path because the CLI `create` command keys off name/path, not wikilink names.
-func resolvePath(ctx context.Context, vault string, t FileTarget) (string, error) {
+// targetPath returns the exact vault-relative path for a target. A path is
+// used as-is; a file (wikilink-style) is resolved through the CLI's `file`
+// command, whose first output line is `path\t<path>`. With neither set the
+// CLI resolves the active file.
+func targetPath(ctx context.Context, vault string, t FileTarget) (string, error) {
 	if t.Path != "" {
 		return t.Path, nil
 	}
-	if t.File == "" {
-		return "", fmt.Errorf("file or path is required")
+	params := map[string]string{}
+	if t.File != "" {
+		params["file"] = t.File
 	}
-	out, err := exec.Run(ctx, exec.Args{Command: "file", Vault: vault, Params: map[string]string{"file": t.File}})
+	out, err := exec.Run(ctx, exec.Args{Command: "file", Vault: vault, Params: params})
 	if err != nil {
 		return "", err
 	}
@@ -48,11 +49,22 @@ func resolvePath(ctx context.Context, vault string, t FileTarget) (string, error
 			return strings.TrimSpace(rest), nil
 		}
 	}
-	return "", fmt.Errorf("could not resolve path for file %q", t.File)
+	return "", fmt.Errorf("could not resolve path for target %+v", t)
+}
+
+// resolvePath is targetPath for tools that must not silently operate on the
+// active file (replace, edit, insert): an explicit target is required.
+func resolvePath(ctx context.Context, vault string, t FileTarget) (string, error) {
+	if t.File == "" && t.Path == "" {
+		return "", fmt.Errorf("file or path is required")
+	}
+	return targetPath(ctx, vault, t)
 }
 
 type ReadInput struct {
 	FileTarget
+	FrontmatterOnly bool `json:"frontmatter_only,omitempty" jsonschema:"return only the YAML frontmatter block"`
+	BodyOnly        bool `json:"body_only,omitempty" jsonschema:"return only the body, without frontmatter"`
 }
 
 type TextOutput struct {
@@ -64,7 +76,46 @@ func readHandler(ctx context.Context, _ *mcp.CallToolRequest, in ReadInput) (*mc
 	if err != nil {
 		return nil, TextOutput{}, err
 	}
+	out = sliceNote(out, in.FrontmatterOnly, in.BodyOnly)
 	return nil, TextOutput{Content: out}, nil
+}
+
+type ReadManyInput struct {
+	Vault           string   `json:"vault,omitempty" jsonschema:"target vault name; defaults to OBSIDIAN_DEFAULT_VAULT or most recent"`
+	Paths           []string `json:"paths" jsonschema:"vault-relative paths to read, in order"`
+	FrontmatterOnly bool     `json:"frontmatter_only,omitempty" jsonschema:"return only each note's YAML frontmatter block"`
+	BodyOnly        bool     `json:"body_only,omitempty" jsonschema:"return only each note's body, without frontmatter"`
+}
+
+func readManyHandler(ctx context.Context, _ *mcp.CallToolRequest, in ReadManyInput) (*mcp.CallToolResult, TextOutput, error) {
+	if len(in.Paths) == 0 {
+		return nil, TextOutput{}, fmt.Errorf("paths is required")
+	}
+	root, err := exec.VaultPath(ctx, in.Vault)
+	if err != nil {
+		return nil, TextOutput{}, err
+	}
+	var b strings.Builder
+	for i, rel := range in.Paths {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "==> %s <==\n", rel)
+		abs, jErr := exec.SecureJoin(root, rel)
+		if jErr != nil {
+			fmt.Fprintf(&b, "[error: %v]\n", jErr)
+			continue
+		}
+		data, rErr := os.ReadFile(abs)
+		if rErr != nil {
+			fmt.Fprintf(&b, "[error: %v]\n", rErr)
+			continue
+		}
+		content := sliceNote(string(data), in.FrontmatterOnly, in.BodyOnly)
+		b.WriteString(strings.TrimRight(content, "\n"))
+		b.WriteString("\n")
+	}
+	return nil, TextOutput{Content: b.String()}, nil
 }
 
 type CreateInput struct {
@@ -78,6 +129,9 @@ type CreateInput struct {
 }
 
 func createHandler(ctx context.Context, _ *mcp.CallToolRequest, in CreateInput) (*mcp.CallToolResult, TextOutput, error) {
+	if in.Content != "" && !exec.CLISafe(in.Content) {
+		return createDirect(ctx, in)
+	}
 	params := map[string]string{}
 	if in.Name != "" {
 		params["name"] = in.Name
@@ -105,14 +159,89 @@ func createHandler(ctx context.Context, _ *mcp.CallToolRequest, in CreateInput) 
 	return nil, TextOutput{Content: out}, nil
 }
 
-// overwrite writes content to a resolved path via the CLI `create` command with
-// the overwrite flag. This is the shared primitive behind replace and edit.
-func overwrite(ctx context.Context, vault, path, content string) (string, error) {
-	params := map[string]string{
-		"path":    path,
-		"content": exec.EncodeMultiline(content),
+// createDirect handles create for content the CLI cannot transport (see
+// exec.CLISafe). The note lands on disk via a direct filesystem write;
+// name/template resolution still goes through the CLI when needed.
+func createDirect(ctx context.Context, in CreateInput) (*mcp.CallToolResult, TextOutput, error) {
+	path := in.Path
+	if path == "" || in.Template != "" {
+		// Let the CLI create the (empty or templated) note first so its
+		// name/auto-folder/template logic applies, then locate the result.
+		params := map[string]string{}
+		if in.Name != "" {
+			params["name"] = in.Name
+		}
+		if in.Path != "" {
+			params["path"] = in.Path
+		}
+		if in.Template != "" {
+			params["template"] = in.Template
+		}
+		out, err := exec.Run(ctx, exec.Args{Command: "create", Vault: in.Vault, Params: params})
+		if err != nil {
+			return nil, TextOutput{}, err
+		}
+		path = parseCreatedPath(out)
+		if path == "" {
+			return nil, TextOutput{}, fmt.Errorf("could not locate created note in CLI output: %q", strings.TrimSpace(out))
+		}
+		content := in.Content
+		if in.Template != "" {
+			existing, rErr := exec.Run(ctx, exec.Args{Command: "read", Vault: in.Vault, Params: map[string]string{"path": path}})
+			if rErr == nil && strings.TrimSpace(existing) != "" {
+				content = strings.TrimRight(existing, "\n") + "\n" + in.Content
+			}
+		}
+		if err := exec.WriteFileDirect(ctx, in.Vault, path, content, true); err != nil {
+			return nil, TextOutput{}, err
+		}
+	} else {
+		if err := exec.WriteFileDirect(ctx, in.Vault, path, in.Content, false); err != nil {
+			return nil, TextOutput{}, err
+		}
 	}
-	return exec.Run(ctx, exec.Args{Command: "create", Vault: vault, Params: params, Flags: []string{"overwrite"}})
+	if in.Open || in.NewTab {
+		flags := []string{}
+		if in.NewTab {
+			flags = append(flags, "newtab")
+		}
+		if _, err := exec.Run(ctx, exec.Args{Command: "open", Vault: in.Vault, Params: map[string]string{"path": path}, Flags: flags}); err != nil {
+			return nil, TextOutput{Content: "Created: " + path + " (open failed: " + err.Error() + ")"}, nil
+		}
+	}
+	return nil, TextOutput{Content: "Created: " + path}, nil
+}
+
+// parseCreatedPath extracts the note path from the CLI's `Created: <path>`
+// confirmation line.
+func parseCreatedPath(out string) string {
+	for line := range strings.SplitSeq(out, "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "Created: "); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	return ""
+}
+
+// writeContent overwrites (or creates) a note at a resolved path. CLI-safe
+// content goes through the CLI `create` command; content the CLI would
+// corrupt (see exec.CLISafe) is written directly into the vault filesystem.
+func writeContent(ctx context.Context, vault, path, content string, overwrite bool) (string, error) {
+	if exec.CLISafe(content) {
+		params := map[string]string{
+			"path":    path,
+			"content": exec.EncodeMultiline(content),
+		}
+		flags := []string{}
+		if overwrite {
+			flags = append(flags, "overwrite")
+		}
+		return exec.Run(ctx, exec.Args{Command: "create", Vault: vault, Params: params, Flags: flags})
+	}
+	if err := exec.WriteFileDirect(ctx, vault, path, content, overwrite); err != nil {
+		return "", err
+	}
+	return "Wrote: " + path, nil
 }
 
 type ReplaceInput struct {
@@ -125,7 +254,7 @@ func replaceHandler(ctx context.Context, _ *mcp.CallToolRequest, in ReplaceInput
 	if err != nil {
 		return nil, TextOutput{}, err
 	}
-	out, err := overwrite(ctx, in.Vault, path, in.Content)
+	out, err := writeContent(ctx, in.Vault, path, in.Content, true)
 	if err != nil {
 		return nil, TextOutput{}, err
 	}
@@ -164,7 +293,7 @@ func editHandler(ctx context.Context, _ *mcp.CallToolRequest, in EditInput) (*mc
 	} else {
 		updated = strings.Replace(content, in.OldString, in.NewString, 1)
 	}
-	if _, err := overwrite(ctx, in.Vault, path, updated); err != nil {
+	if _, err := writeContent(ctx, in.Vault, path, updated, true); err != nil {
 		return nil, TextOutput{}, err
 	}
 	noun := "match"
@@ -185,6 +314,13 @@ type AppendInput struct {
 }
 
 func appendHandler(ctx context.Context, _ *mcp.CallToolRequest, in AppendInput) (*mcp.CallToolResult, TextOutput, error) {
+	if !exec.CLISafe(in.Content) {
+		out, err := spliceDirect(ctx, in.Vault, in.FileTarget, in.Content, in.Inline, false)
+		if err != nil {
+			return nil, TextOutput{}, err
+		}
+		return nil, TextOutput{Content: out}, nil
+	}
 	params := in.params()
 	params["content"] = exec.EncodeMultiline(in.Content)
 	flags := []string{}
@@ -205,6 +341,13 @@ type PrependInput struct {
 }
 
 func prependHandler(ctx context.Context, _ *mcp.CallToolRequest, in PrependInput) (*mcp.CallToolResult, TextOutput, error) {
+	if !exec.CLISafe(in.Content) {
+		out, err := spliceDirect(ctx, in.Vault, in.FileTarget, in.Content, in.Inline, true)
+		if err != nil {
+			return nil, TextOutput{}, err
+		}
+		return nil, TextOutput{Content: out}, nil
+	}
 	params := in.params()
 	params["content"] = exec.EncodeMultiline(in.Content)
 	flags := []string{}
@@ -216,6 +359,30 @@ func prependHandler(ctx context.Context, _ *mcp.CallToolRequest, in PrependInput
 		return nil, TextOutput{}, err
 	}
 	return nil, TextOutput{Content: out}, nil
+}
+
+// spliceDirect implements append/prepend for content the CLI cannot transport
+// (see exec.CLISafe): read the note, concatenate, write back directly.
+func spliceDirect(ctx context.Context, vault string, t FileTarget, content string, inline, prepend bool) (string, error) {
+	path, err := targetPath(ctx, vault, t)
+	if err != nil {
+		return "", err
+	}
+	existing, err := exec.Run(ctx, exec.Args{Command: "read", Vault: vault, Params: map[string]string{"path": path}})
+	if err != nil {
+		return "", err
+	}
+	sep := "\n"
+	if inline {
+		sep = ""
+	}
+	var updated string
+	if prepend {
+		updated = content + sep + existing
+	} else {
+		updated = existing + sep + content
+	}
+	return writeContent(ctx, vault, path, updated, true)
 }
 
 type MoveInput struct {
@@ -231,8 +398,10 @@ func moveHandler(ctx context.Context, _ *mcp.CallToolRequest, in MoveInput) (*mc
 	if err != nil && strings.Contains(err.Error(), "ENOENT") && strings.Contains(err.Error(), in.To) {
 		// CLI's move uses raw rename(2) — no auto-mkdir. Create destination dir, retry.
 		if root, vErr := exec.VaultPath(ctx, in.Vault); vErr == nil && root != "" {
-			if mkErr := os.MkdirAll(filepath.Join(root, filepath.Dir(in.To)), 0o755); mkErr == nil {
-				out, err = exec.Run(ctx, args)
+			if dest, jErr := exec.SecureJoin(root, filepath.Dir(in.To)); jErr == nil {
+				if mkErr := os.MkdirAll(dest, 0o755); mkErr == nil {
+					out, err = exec.Run(ctx, args)
+				}
 			}
 		}
 	}
@@ -338,8 +507,12 @@ func wordCountHandler(ctx context.Context, _ *mcp.CallToolRequest, in WordCountI
 func RegisterFiles(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "obsidian_read",
-		Description: "Read full contents of a note. Specify file (wikilink-style) or path (exact). Omit both for active file.",
+		Description: "Read full contents of a note. Specify file (wikilink-style) or path (exact). Omit both for active file. frontmatter_only/body_only narrow the result.",
 	}, readHandler)
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "obsidian_read_many",
+		Description: "Read several notes in one call. Provide vault-relative paths; returns each note prefixed by '==> path <=='. frontmatter_only/body_only narrow each note.",
+	}, readManyHandler)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "obsidian_create",
 		Description: "Create a NEW note. Use name (auto-folder by templates) or path (explicit). Optional content, template, open/newtab flags. Fails if the note already exists — use obsidian_edit (partial change) or obsidian_replace (full rewrite) to modify existing notes.",

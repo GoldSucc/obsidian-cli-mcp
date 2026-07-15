@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/GoldSucc/obsidian-cli-mcp/internal/exec"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -68,6 +70,32 @@ func baseCreateHandler(ctx context.Context, _ *mcp.CallToolRequest, in BaseCreat
 	}
 	if in.Name != "" {
 		params["name"] = in.Name
+	}
+	if in.Content != "" && !exec.CLISafe(in.Content) {
+		// Content the CLI would corrupt: create the item empty, locate it,
+		// then write the content directly into the vault.
+		out, err := exec.Run(ctx, exec.Args{Command: "base:create", Vault: in.Vault, Params: params})
+		if err != nil {
+			return nil, TextOutput{}, err
+		}
+		path := parseCreatedPath(out)
+		if path == "" {
+			return nil, TextOutput{}, fmt.Errorf("could not locate created item in CLI output: %q; item was created without content", strings.TrimSpace(out))
+		}
+		if err := exec.WriteFileDirect(ctx, in.Vault, path, in.Content, true); err != nil {
+			return nil, TextOutput{}, err
+		}
+		result := "Created: " + path
+		if in.Open || in.NewTab {
+			openFlags := []string{}
+			if in.NewTab {
+				openFlags = append(openFlags, "newtab")
+			}
+			if _, oErr := exec.Run(ctx, exec.Args{Command: "open", Vault: in.Vault, Params: map[string]string{"path": path}, Flags: openFlags}); oErr != nil {
+				result += " (open failed: " + oErr.Error() + ")"
+			}
+		}
+		return nil, TextOutput{Content: result}, nil
 	}
 	if in.Content != "" {
 		params["content"] = exec.EncodeMultiline(in.Content)

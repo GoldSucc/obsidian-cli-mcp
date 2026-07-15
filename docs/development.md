@@ -55,7 +55,7 @@ Optional env: `OBSIDIAN_DEFAULT_VAULT=<name>` to bake in a default vault target.
 > `internal/exec/exec.go` strips these before surfacing errors. If you change the binary's stderr format (Obsidian update), update `preamblePatterns` in that file.
 
 > [!warning] Multiline content
-> The CLI consumes literal `\n` / `\t` escape sequences in `content=<value>`, not raw newlines. JSON inputs from MCP clients contain real newline chars. `exec.EncodeMultiline` translates — every tool that accepts `content` must call it before writing into the params map.
+> The CLI consumes literal `\n` / `\t` escape sequences in `content=<value>`, not raw newlines. JSON inputs from MCP clients contain real newline chars. `exec.EncodeMultiline` translates — but the CLI's decode is a **blind replace with no escape for backslash itself** (`\\n` decodes to `\` + newline), so content containing any backslash cannot pass through `content=` losslessly. Every tool that accepts `content` must gate on `exec.CLISafe`: safe content → `EncodeMultiline` + CLI; unsafe content → `exec.WriteFileDirect` (direct filesystem write inside the vault, containment-checked via `exec.SecureJoin`). See `writeContent` in `internal/tools/files.go` for the shared routing.
 
 ## Smoke tests
 

@@ -22,6 +22,39 @@ func readNote(t *testing.T, path string) string {
 	return out
 }
 
+const backslashNotePath = "Home/zz-backslash-test.md"
+
+// Content with backslashes must survive create/edit/append unchanged — the
+// CLI content= channel would corrupt it, so these route through the direct
+// filesystem write (see exec.CLISafe).
+func TestBackslashContent(t *testing.T) {
+	ctx := context.Background()
+	defer exec.Run(ctx, exec.Args{Command: "delete", Params: map[string]string{"path": backslashNotePath}, Flags: []string{"permanent"}})
+
+	content := "windows path C:\\notes\\x\nlatex \\newcommand{\\x}\nregex \\d+\\t"
+	if _, _, err := createHandler(ctx, nil, CreateInput{Path: backslashNotePath, Content: content}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// CLI read appends a trailing newline when printing — not corruption.
+	if got := readNote(t, backslashNotePath); strings.TrimRight(got, "\n") != content {
+		t.Fatalf("create corrupted content:\nwant %q\ngot  %q", content, got)
+	}
+
+	if _, _, err := editHandler(ctx, nil, EditInput{FileTarget: FileTarget{Path: backslashNotePath}, OldString: "regex \\d+", NewString: "regex \\w+"}); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	if got := readNote(t, backslashNotePath); !strings.Contains(got, "regex \\w+\\t") || !strings.Contains(got, "C:\\notes\\x") {
+		t.Fatalf("edit corrupted content: %q", got)
+	}
+
+	if _, _, err := appendHandler(ctx, nil, AppendInput{FileTarget: FileTarget{Path: backslashNotePath}, Content: "tail \\alpha"}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if got := readNote(t, backslashNotePath); !strings.HasSuffix(strings.TrimRight(got, "\n"), "tail \\alpha") {
+		t.Fatalf("append corrupted content: %q", got)
+	}
+}
+
 func TestEditReplace(t *testing.T) {
 	ctx := context.Background()
 	defer exec.Run(ctx, exec.Args{Command: "delete", Params: map[string]string{"path": testNotePath}, Flags: []string{"permanent"}})

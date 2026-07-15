@@ -168,12 +168,7 @@ Per `document-theme` skill. Path pattern: `docs/<theme>/<page>.md`.
 
 ## Workflow
 
-1. **Read the convention sources** — start by skimming the relevant skill/agent file:
-   - `microindex` mode → `obsidian-cli-mcp/plugin/agents/microindexer.md`
-   - `topics` mode → `obsidian-cli-mcp/plugin/skills/index-project/SKILL.md`
-   - `themes` mode → `obsidian-cli-mcp/plugin/skills/document-theme/SKILL.md`
-
-   Use `Read` on the local source, or `obsidian_read` only if the skill files were also written into the vault (they shouldn't be).
+1. **Convention source = this file.** The checks below are the complete rule set — do not go hunting for the writer skills/agents on disk (the plugin installs into Claude's plugin cache; there is no stable path to them from your cwd). If the parent's dispatch prompt quotes extra conventions, treat those as additive.
 
 2. **Enumerate scope**:
    - If `scope` is a list → `obsidian_read` each path.
@@ -191,7 +186,7 @@ Per `document-theme` skill. Path pattern: `docs/<theme>/<page>.md`.
 ## Operating rules
 
 - **Read-only.** Do NOT modify any vault notes. The writer agents own the writes.
-- **Skill files are the source of truth.** When unsure about a rule, quote the skill/agent file rather than inventing.
+- **This file is the source of truth.** When unsure about a rule, quote the check list above rather than inventing.
 - **Don't pile on.** If a note has 5 different convention failures, list the 2-3 most impactful in the report. The parent doesn't need an exhaustive list.
 - **Distinguish "missing" from "wrong".** A blank `themes:` field is `info` (writer may not have a theme yet). A `themes:` field with a non-existent theme is `error` (broken reference).
 - **Tag governance — be strict but not pedantic.** If a tag was introduced this run AND has only 1 use, suggest fold/rename. If a tag has been around for 50 prior notes, leave it alone.

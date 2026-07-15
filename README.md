@@ -4,7 +4,7 @@ MCP server + Claude Code plugin that wraps the official `obsidian` CLI and turns
 
 ## What's in the box
 
-- **MCP server** with 58 typed tools covering reads, writes, search, daily notes, properties, tasks, history, sync, bookmarks, bases, workspace.
+- **MCP server** with 79 typed tools covering reads (single + batch), writes (append/prepend/edit/replace/heading-scoped insert), search, tag set-algebra and frontmatter-property queries, daily notes, properties, tasks, history, sync, bookmarks, bases, workspace.
 - **`obsidian_run`** escape hatch for any CLI command not yet typed (plugin/theme/dev/eval).
 - **`index-project` skill** — Claude-maintained semantic index of code projects under `semantic-index/<project>/` in your vault. Linked notes, frontmatter, wikilinks. Survives sessions, compounds over time.
 - **`document-theme` skill** — general topic knowledge base under `docs/<theme>/` with `_index.base` dashboards. Subject-noun themes, source-cited (Context7, defuddle, web), reusable across projects.
@@ -172,7 +172,7 @@ Example anchors inside `semantic-index/techstep/index/file/auth.md`:
 
 This makes the microindex queryable Obsidian-natively:
 
-- `obsidian_tag name=topic/login verbose path=semantic-index/<project>` → every code object related to login
+- `obsidian_tag_query all=["topic/login"] path_prefix=semantic-index/<project>` → every code object related to login; combine tags: `all=["kind/clas", "topic/auth"]`
 - `obsidian_search query="topic/jwt" path=semantic-index/<project>/index` → files with JWT-tagged anchors
 - Bases dashboard at `semantic-index/<project>/index/_index.base` → pivot by `kind`, by `module`, by `theme`, by recency
 

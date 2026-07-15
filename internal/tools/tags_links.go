@@ -2,6 +2,9 @@ package tools
 
 import (
 	"context"
+	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/GoldSucc/obsidian-cli-mcp/internal/exec"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -228,6 +231,105 @@ func outlineHandler(ctx context.Context, _ *mcp.CallToolRequest, in OutlineInput
 	return nil, TextOutput{Content: out}, nil
 }
 
+type TagQueryInput struct {
+	Vault      string   `json:"vault,omitempty" jsonschema:"target vault name; defaults to OBSIDIAN_DEFAULT_VAULT or most recent"`
+	All        []string `json:"all,omitempty" jsonschema:"tags a note must ALL carry (AND); no leading #"`
+	Any        []string `json:"any,omitempty" jsonschema:"tags of which a note must carry at least one (OR); no leading #"`
+	None       []string `json:"none,omitempty" jsonschema:"tags a note must NOT carry; no leading #"`
+	PathPrefix string   `json:"path_prefix,omitempty" jsonschema:"restrict results to paths under this folder"`
+}
+
+// tagFiles returns the set of note paths carrying a tag. An unknown tag is an
+// empty set, not an error, so set algebra over it stays meaningful.
+func tagFiles(ctx context.Context, vault, name string) (map[string]bool, error) {
+	out, err := exec.Run(ctx, exec.Args{Command: "tag", Vault: vault, Params: map[string]string{"name": name}, Flags: []string{"verbose"}})
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return map[string]bool{}, nil
+		}
+		return nil, err
+	}
+	files := map[string]bool{}
+	for line := range strings.SplitSeq(out, "\n") {
+		line = strings.TrimSpace(line)
+		// verbose output opens with a `#tag<TAB>count` header line
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		files[line] = true
+	}
+	return files, nil
+}
+
+func tagQueryHandler(ctx context.Context, _ *mcp.CallToolRequest, in TagQueryInput) (*mcp.CallToolResult, TextOutput, error) {
+	if len(in.All) == 0 && len(in.Any) == 0 {
+		return nil, TextOutput{}, fmt.Errorf("at least one tag in all or any is required")
+	}
+	var result map[string]bool
+	for _, tag := range in.All {
+		files, err := tagFiles(ctx, in.Vault, tag)
+		if err != nil {
+			return nil, TextOutput{}, err
+		}
+		if result == nil {
+			result = files
+			continue
+		}
+		for f := range result {
+			if !files[f] {
+				delete(result, f)
+			}
+		}
+	}
+	if len(in.Any) > 0 {
+		union := map[string]bool{}
+		for _, tag := range in.Any {
+			files, err := tagFiles(ctx, in.Vault, tag)
+			if err != nil {
+				return nil, TextOutput{}, err
+			}
+			for f := range files {
+				union[f] = true
+			}
+		}
+		if result == nil {
+			result = union
+		} else {
+			for f := range result {
+				if !union[f] {
+					delete(result, f)
+				}
+			}
+		}
+	}
+	for _, tag := range in.None {
+		files, err := tagFiles(ctx, in.Vault, tag)
+		if err != nil {
+			return nil, TextOutput{}, err
+		}
+		for f := range files {
+			delete(result, f)
+		}
+	}
+	paths := make([]string, 0, len(result))
+	for f := range result {
+		if in.PathPrefix != "" && !strings.HasPrefix(f, strings.TrimSuffix(in.PathPrefix, "/")+"/") {
+			continue
+		}
+		paths = append(paths, f)
+	}
+	sort.Strings(paths)
+	unit := "notes"
+	if len(paths) == 1 {
+		unit = "note"
+	}
+	header := fmt.Sprintf("%d %s", len(paths), unit)
+	if len(paths) == 0 {
+		return nil, TextOutput{Content: header}, nil
+	}
+	return nil, TextOutput{Content: header + "\n" + strings.Join(paths, "\n")}, nil
+}
+
 func RegisterTagsLinks(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "obsidian_tag",
@@ -261,6 +363,10 @@ func RegisterTagsLinks(s *mcp.Server) {
 		Name:        "obsidian_deadends",
 		Description: "List notes with no outgoing links. Optional total flag; all=true includes non-markdown files.",
 	}, deadendsHandler)
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "obsidian_tag_query",
+		Description: "Find notes by tag set algebra: all (AND), any (OR), none (NOT), optional path_prefix scope. Returns matching note paths. Use for microindex queries like all=[kind/clas, topic/auth].",
+	}, tagQueryHandler)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "obsidian_outline",
 		Description: "Show the heading outline of a note. Specify file or path; optional total flag and format (tree|md|json).",
