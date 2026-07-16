@@ -62,6 +62,11 @@ func Run(ctx context.Context, a Args) (string, error) {
 	runCtx, cancel := context.WithTimeout(ctx, runTimeout())
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, Binary, cliArgs...)
+	// On timeout the SIGKILL only reaches the CLI process itself; if it left a
+	// helper child holding the stdout/stderr pipes (the obsidian CLI is the
+	// Electron binary and can spawn helpers), Run would keep waiting for the
+	// pipes to drain until every descendant exits. WaitDelay caps that wait.
+	cmd.WaitDelay = 5 * time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
