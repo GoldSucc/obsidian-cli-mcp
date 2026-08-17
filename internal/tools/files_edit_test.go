@@ -4,13 +4,15 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GoldSucc/obsidian-cli-mcp/internal/exec"
 )
 
 // These tests drive the real handlers against a live Obsidian vault via the
 // `obsidian` CLI. They require the Obsidian app to be running. Run explicitly:
-//   go test ./internal/tools -run TestEditReplace -v
+//
+//	go test ./internal/tools -run TestEditReplace -v
 const testNotePath = "Home/zz-edit-replace-test.md"
 
 func readNote(t *testing.T, path string) string {
@@ -24,6 +26,24 @@ func readNote(t *testing.T, path string) string {
 
 const backslashNotePath = "Home/zz-backslash-test.md"
 
+func waitNote(t *testing.T, path string, ok func(string) bool) string {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	var out string
+	var err error
+	for time.Now().Before(deadline) {
+		out, err = exec.Run(context.Background(), exec.Args{Command: "read", Params: map[string]string{"path": path}})
+		if err == nil && ok(out) {
+			return out
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return out
+}
+
 // Content with backslashes must survive create/edit/append unchanged — the
 // CLI content= channel would corrupt it, so these route through the direct
 // filesystem write (see exec.CLISafe).
@@ -36,21 +56,27 @@ func TestBackslashContent(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	// CLI read appends a trailing newline when printing — not corruption.
-	if got := readNote(t, backslashNotePath); strings.TrimRight(got, "\n") != content {
+	if got := waitNote(t, backslashNotePath, func(s string) bool {
+		return strings.TrimRight(s, "\n") == content
+	}); strings.TrimRight(got, "\n") != content {
 		t.Fatalf("create corrupted content:\nwant %q\ngot  %q", content, got)
 	}
 
 	if _, _, err := editHandler(ctx, nil, EditInput{FileTarget: FileTarget{Path: backslashNotePath}, OldString: "regex \\d+", NewString: "regex \\w+"}); err != nil {
 		t.Fatalf("edit: %v", err)
 	}
-	if got := readNote(t, backslashNotePath); !strings.Contains(got, "regex \\w+\\t") || !strings.Contains(got, "C:\\notes\\x") {
+	if got := waitNote(t, backslashNotePath, func(s string) bool {
+		return strings.Contains(s, "regex \\w+\\t") && strings.Contains(s, "C:\\notes\\x")
+	}); !strings.Contains(got, "regex \\w+\\t") || !strings.Contains(got, "C:\\notes\\x") {
 		t.Fatalf("edit corrupted content: %q", got)
 	}
 
 	if _, _, err := appendHandler(ctx, nil, AppendInput{FileTarget: FileTarget{Path: backslashNotePath}, Content: "tail \\alpha"}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	if got := readNote(t, backslashNotePath); !strings.HasSuffix(strings.TrimRight(got, "\n"), "tail \\alpha") {
+	if got := waitNote(t, backslashNotePath, func(s string) bool {
+		return strings.HasSuffix(strings.TrimRight(s, "\n"), "tail \\alpha")
+	}); !strings.HasSuffix(strings.TrimRight(got, "\n"), "tail \\alpha") {
 		t.Fatalf("append corrupted content: %q", got)
 	}
 }

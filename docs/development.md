@@ -46,8 +46,11 @@ Optional env: `OBSIDIAN_DEFAULT_VAULT=<name>` to bake in a default vault target.
 >
 > **Fix**: rephrase. Bad: `"key=value pairs of params"`. Good: `"params as name/value pairs"`.
 
+> [!warning] The CLI is `obsidian-cli`, not `obsidian`
+> `internal/exec/exec.go` pins `Binary = "obsidian-cli"`. The app bundle ships that CLI alongside the app binary `Obsidian`, and macOS is case-insensitive — so looking up `obsidian` finds the **app**, which boots a whole Obsidian instance per call and hangs until the timeout. `TestRunPrefersCLIOverAppBinary` guards this.
+
 > [!warning] Stderr noise from obsidian CLI
-> Every `obsidian` invocation writes preamble lines to stderr:
+> Every `obsidian-cli` invocation writes preamble lines to stderr:
 > ```
 > 2026-05-04 13:56:24 Loading updated app package /Users/.../obsidian-1.12.7.asar
 > Your Obsidian installer is out of date. Please download the latest installer ...

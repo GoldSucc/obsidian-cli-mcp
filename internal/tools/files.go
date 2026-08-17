@@ -124,8 +124,8 @@ type CreateInput struct {
 	Path     string `json:"path,omitempty" jsonschema:"explicit path from vault root"`
 	Content  string `json:"content,omitempty" jsonschema:"initial file content; real newlines are accepted"`
 	Template string `json:"template,omitempty" jsonschema:"template name to use"`
-	Open      bool  `json:"open,omitempty" jsonschema:"open file after creation"`
-	NewTab    bool  `json:"newtab,omitempty" jsonschema:"open in new tab (implies open)"`
+	Open     bool   `json:"open,omitempty" jsonschema:"open file after creation"`
+	NewTab   bool   `json:"newtab,omitempty" jsonschema:"open in new tab (implies open)"`
 }
 
 func createHandler(ctx context.Context, _ *mcp.CallToolRequest, in CreateInput) (*mcp.CallToolResult, TextOutput, error) {

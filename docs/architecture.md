@@ -7,7 +7,7 @@ obsidian-cli-mcp/
 ├── go.mod                       module github.com/GoldSucc/obsidian-cli-mcp
 ├── main.go                      server boot, transport, group registration
 ├── internal/
-│   ├── exec/exec.go             shell out to `obsidian`, strip stderr preamble
+│   ├── exec/exec.go             shell out to `obsidian-cli`, strip stderr preamble
 │   └── tools/
 │       ├── generic.go           obsidian_run — escape hatch
 │       ├── files.go             read, create, append, prepend, move, rename, delete, file_info, files_list, wordcount

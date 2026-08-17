@@ -27,14 +27,17 @@ go install github.com/GoldSucc/obsidian-cli-mcp@latest
 
 This places `obsidian-cli-mcp` in `$(go env GOPATH)/bin`. Make sure that's on your `PATH`.
 
-The binary shells out to `obsidian` (the official CLI bundled with the Obsidian app). Verify:
+The binary shells out to `obsidian-cli` (the official CLI bundled with the Obsidian app). Verify:
 
 ```bash
-which obsidian          # /Applications/Obsidian.app/Contents/MacOS/obsidian on macOS
-obsidian version
+which obsidian-cli      # /Applications/Obsidian.app/Contents/MacOS/obsidian-cli on macOS
+obsidian-cli version
 ```
 
-If `obsidian` isn't on PATH, install the latest Obsidian, enable command line tools in general settings and re-launch your shell.
+If `obsidian-cli` isn't on PATH, install the latest Obsidian, enable command line tools in general settings and re-launch your shell.
+
+> [!warning] It must be `obsidian-cli`, never `obsidian`
+> The app bundle's `MacOS/` directory contains both `obsidian-cli` and the app binary `Obsidian`. macOS filesystems are case-insensitive by default, so a PATH lookup for `obsidian` resolves to **the app**. Every call then boots a fresh Obsidian instance that never answers the command — the visible symptom is Obsidian restarting on every tool call and every MCP call timing out after 30s.
 
 ### 2. Add the marketplace + install the plugin (recommended)
 
@@ -258,7 +261,7 @@ Restart Claude Code to pick up new tool schemas.
 
 The `mcp-obsidian` Python server uses Obsidian's Local REST API plugin. Surface ~13 tools.
 
-The official `obsidian` CLI ships with the desktop app and exposes ~80 commands including plugin reload, eval, dev console, screenshot, history, sync, bases — none of which the REST plugin exposes. Caveat: requires Obsidian desktop app to be open.
+The official `obsidian-cli` ships with the desktop app and exposes ~80 commands including plugin reload, eval, dev console, screenshot, history, sync, bases — none of which the REST plugin exposes. Caveat: requires Obsidian desktop app to be open.
 
 ## License
 

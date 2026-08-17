@@ -13,7 +13,13 @@ import (
 	"time"
 )
 
-const Binary = "obsidian"
+// Binary is the CLI shipped inside the Obsidian app bundle. It must be the
+// exact name `obsidian-cli`: the bundle's MacOS directory holds both the CLI
+// and the app binary `Obsidian`, and on a case-insensitive filesystem a lookup
+// for `obsidian` resolves to the app instead. That silently launches a whole
+// Obsidian instance per call, which never answers the command and hangs until
+// the timeout below fires.
+const Binary = "obsidian-cli"
 
 // defaultTimeout bounds a single CLI invocation. The CLI talks to the Obsidian
 // app over IPC; when the app is hung or quitting, the call can block forever
