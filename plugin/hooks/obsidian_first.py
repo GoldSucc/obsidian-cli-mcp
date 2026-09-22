@@ -11,13 +11,25 @@ working set. Trivial confirmation prompts are skipped to avoid pointless noise.
 Cost: ~70 tokens per injected turn. Fails silently — never blocks a turn.
 """
 import json
+import re
 import sys
 
 # Pure confirmations / acknowledgements — the directive already landed, skip.
 SKIP = {
     "y", "n", "yes", "no", "ok", "okay", "k", "go", "continue", "cont",
     "thanks", "thx", "ty", "stop", "done", "next", "yep", "nope", "sure",
+    "please", "do it", "go on", "proceed", "fix it", "again",
 }
+
+# Prompts the harness writes, not the user: task notifications, captured
+# command output, skill banners, session-continuation headers. No question in
+# them, so the directive is pure noise.
+MACHINE = re.compile(
+    r"<(task-notification|system-reminder|bash-stdout|bash-stderr|bash-input|"
+    r"local-command-stdout|command-name|command-message)\b"
+    r"|^Base directory for this skill:"
+    r"|^This session is being continued from a previous conversation",
+    re.M)
 
 DIRECTIVE = (
     "[Standing directive — Obsidian vault = primary knowledge base]\n"
@@ -39,7 +51,9 @@ def main():
         return
 
     prompt = (payload.get("prompt") or "").strip()
-    if not prompt or prompt.lower() in SKIP:
+    if not prompt or prompt.lower() in SKIP or prompt.startswith("/"):
+        return
+    if MACHINE.search(prompt):
         return
 
     print(json.dumps({
